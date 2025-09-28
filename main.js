@@ -1,7 +1,7 @@
 // =========================================================
 // A. ゲーム定数と状態 (クライアント側)
 // =========================================================
-const SERVER_URL = "https://970b785c5b0f.ngrok-free.app";
+const SERVER_URL = "https://hot.ssnetwork.io:40771";
 const INITIAL_LAT = 35.681236;
 const INITIAL_LNG = 139.767125;
 const STATION_COST = 50000000;
