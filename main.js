@@ -105,7 +105,7 @@ const Game = {
       opacity: 1,
       lineCap: "round",
     };
-
+    t;
     const polyline = L.polyline(line.coords, finalStyle)
       .addTo(map)
       .bindPopup(
@@ -220,7 +220,7 @@ function connectSocket(userId) {
   // ★★★ Socket.IOの接続先を明示的に指定 ★★★
   socket = io(SERVER_URL, {
     // 認証クッキーをクロスオリジンで送信するために必要
-    withCredentials: true,
+    withCredentials: false,
   });
 
   socket.on("connect", () => {
