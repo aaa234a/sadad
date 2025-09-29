@@ -427,10 +427,7 @@
             lineCap: "round",
           };
           this.allLines[line.id] = L.polyline(line.coords, finalStyle)
-            .addTo(map)
-            .bindPopup(
-              `<b>Line ${line.id}</b> (${line.trackType})<br>Owner: ${line.ownerId}`
-            );
+            .addTo(map);
         },
       };
 
