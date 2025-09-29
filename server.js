@@ -20,7 +20,7 @@ const io = socketio(server);
 // =================================================================
 // 提供されたDATABASE_URLを環境変数として使用します。
 // Renderなどの環境では、この環境変数を設定してください。
-const DATABASE_URL = process.env.DATABASE_URL || "postgresql://postgres:3137admin@db.cvkakrivxedealuxospm.supabase.co:5432/postgres";
+const DATABASE_URL = process.env.DATABASE_URL || "mongodb+srv://ktyoshitu87_db_user:3137admin@cluster0.ag8sryr.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0";
 
 if (!DATABASE_URL) {
     console.error("FATAL ERROR: DATABASE_URL environment variable is not set.");
