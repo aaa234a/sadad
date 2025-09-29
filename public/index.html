@@ -732,39 +732,76 @@ drawLine(line) {
 function handleLineDismantle(e) {
   if (Game.mode !== "dismantle-line" || !socket) return;
 
-  let closestLine = null;
-  let closestLineId = null;
-  let minDistance = Infinity;
-  const lineSearchRadiusMeters = 50;
+  if (Game.establishedLines.length === 0) {
+    showInfo("解体可能な路線がありません");
+    return;
+  }
 
-  Object.entries(Game.allLines).forEach(([lineId, polyline]) => {
-    const latlngs = polyline.getLatLngs();
-    latlngs.forEach((latlng) => {
-      const dist = e.latlng.distanceTo(latlng);
-      if (dist < minDistance && dist < lineSearchRadiusMeters) {
-        minDistance = dist;
-        closestLine = polyline;
-        closestLineId = lineId;
+  const clickLatLng = e.latlng;
+  let closestLine = null;
+  let closestDistance = Infinity;
+  const searchRadiusMeters = 50;
+
+  // 自分の路線だけ走査
+  Game.establishedLines.forEach((line) => {
+    const latlngs = line.coords.map((c) => L.latLng(c[0], c[1]));
+
+    // 各セグメントに対して最近接点距離を計算
+    for (let i = 0; i < latlngs.length - 1; i++) {
+      const p1 = latlngs[i];
+      const p2 = latlngs[i + 1];
+      const dist = pointToSegmentDistance(clickLatLng, p1, p2);
+      if (dist < closestDistance && dist < searchRadiusMeters) {
+        closestDistance = dist;
+        closestLine = line;
       }
-    });
+    }
   });
 
-  if (!closestLine || !closestLineId) {
-    alert("クリックした位置の近くに解体できる路線が見つかりません。");
+  if (!closestLine) {
+    showInfo("クリック付近に解体可能な路線がありません");
     return;
   }
 
-  const lineData = Game.establishedLines.find((l) => l.id == closestLineId);
-  if (!lineData || lineData.ownerId !== Game.userId) {
-    alert("自分の路線のみ解体可能です。");
-    return;
-  }
-
-  const dismantleCost = Math.round(lineData.cost * 0.1);
-  if (confirm(`路線 ${closestLineId} を解体しますか？ (費用: ¥${dismantleCost.toLocaleString()})`)) {
-    socket.emit("dismantleLine", { lineId: parseInt(closestLineId) });
+  const dismantleCost = Math.round((closestLine.cost || 0) * 0.1);
+  if (confirm(`路線 ${closestLine.id} を解体しますか？ (費用: ¥${dismantleCost.toLocaleString()})`)) {
+    socket.emit("dismantleLine", { lineId: closestLine.id });
   }
 }
+
+// ポイントから線分までの最短距離 (Leaflet LatLng使用)
+function pointToSegmentDistance(p, p1, p2) {
+  // 緯度経度を平面座標に近似
+  const x = p.lng, y = p.lat;
+  const x1 = p1.lng, y1 = p1.lat;
+  const x2 = p2.lng, y2 = p2.lat;
+
+  const A = x - x1;
+  const B = y - y1;
+  const C = x2 - x1;
+  const D = y2 - y1;
+
+  const dot = A * C + B * D;
+  const len_sq = C * C + D * D;
+  let param = -1;
+  if (len_sq !== 0) param = dot / len_sq;
+
+  let xx, yy;
+  if (param < 0) {
+    xx = x1; yy = y1;
+  } else if (param > 1) {
+    xx = x2; yy = y2;
+  } else {
+    xx = x1 + param * C;
+    yy = y1 + param * D;
+  }
+
+  const dx = x - xx;
+  const dy = y - yy;
+  // 距離をメートル換算
+  return map.distance([y, x], [yy, xx]);
+}
+
 
 
       // =========================================================
