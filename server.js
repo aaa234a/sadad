@@ -648,44 +648,45 @@ io.on('connection', (socket) => {
         const userState = ServerGame.users[userId];
         userState.socketId = socket.id; 
         
-// まず allLines を作成
-const allLines = Object.values(ServerGame.users)
-  .flatMap(user => user.establishedLines)
-  .map(line => ({
-    id: line.id,
-    ownerId: line.ownerId,
-    coords: line.coords,
-    color: line.color,
-    trackType: line.trackType
-  }));
+        // まず allLines を作成
+        const allLines = Object.values(ServerGame.users)
+          .flatMap(user => user.establishedLines)
+          .map(line => ({
+            id: line.id,
+            ownerId: line.ownerId,
+            coords: line.coords,
+            color: line.color,
+            trackType: line.trackType
+          }));
 
-socket.emit('initialState', {
-  money: userState.money,
-  totalConstructionCost: userState.totalConstructionCost,
-  establishedLines: allLines,
-  stations: ServerGame.globalStats.stations.map(s => ({
-    id: s.id,
-    name: s.name,
-    coords: s.coords,
-    ownerId: s.ownerId
-  })),
-  vehicles: userState.vehicles.map(v => ({
-    id: v.id,
-    lineId: v.lineId,
-    ownerId: v.ownerId,
-    data: {
-      name: v.data.name,
-      type: v.data.type,
-      capacity: v.data.capacity,
-      color: v.data.color
-    },
-    currentLat: v.currentLat,
-    currentLng: v.currentLng,
-    status: v.status,
-    isReversed: v.isReversed
-  }))
-});
-
+        socket.emit('initialState', {
+          money: userState.money,
+          totalConstructionCost: userState.totalConstructionCost,
+          establishedLines: allLines,
+          stations: ServerGame.globalStats.stations.map(s => ({
+            id: s.id,
+            name: s.name,
+            coords: s.coords,
+            ownerId: s.ownerId
+          })),
+          vehicles: userState.vehicles.map(v => ({
+            id: v.id,
+            lineId: v.lineId,
+            ownerId: v.ownerId,
+            data: {
+              name: v.data.name,
+              type: v.data.type,
+              capacity: v.data.capacity,
+              color: v.data.color
+            },
+            currentLat: v.currentLat,
+            currentLng: v.currentLng,
+            status: v.status,
+            isReversed: v.isReversed
+          }))
+        });
+    }); // ← login の閉じカッコ
+}); // ← connection の閉じカッコ
 
 
 
