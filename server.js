@@ -10,16 +10,29 @@ require('dotenv').config(); // 環境変数をロード
 const { Pool } = require('pg'); // PostgreSQLクライアント
 
 const app = express();
+// RenderなどのPaaS環境では環境変数からポートを取得するのが一般的
+const PORT = process.env.PORT || 3000; 
 const server = http.createServer(app);
 const io = socketio(server);
-
-const PORT = 3000;
 
 // =================================================================
 // 0. データベース接続とユーティリティ (Supabase/PostgreSQL)
 // =================================================================
+// 提供されたDATABASE_URLを環境変数として使用します。
+// Renderなどの環境では、この環境変数を設定してください。
+const DATABASE_URL = process.env.DATABASE_URL || "postgresql://postgres:3137admin@db.cvkakrivxedealuxospm.supabase.co:5432/postgres";
+
+if (!DATABASE_URL) {
+    console.error("FATAL ERROR: DATABASE_URL environment variable is not set.");
+    process.exit(1);
+}
+
 const pool = new Pool({
-    connectionString: process.env.DATABASE_URL,
+    connectionString: DATABASE_URL,
+    // Renderなどの環境ではSSL接続が必要な場合があります
+    ssl: {
+        rejectUnauthorized: false // Supabaseの証明書検証をスキップ
+    }
 });
 
 // DB操作ユーティリティ
@@ -34,7 +47,7 @@ const dbQuery = async (text, params = []) => {
 };
 
 // =================================================================
-// A. サーバーサイド・ゲーム定数とユーティリティ (変更なし)
+// A. サーバーサイド・ゲーム定数とユーティリティ
 // =================================================================
 const STATION_COST = 50000000;
 const VEHICLE_BASE_COST = 8000000;
@@ -97,7 +110,7 @@ function calculateConstructionCost(coord1, coord2, trackType) {
 }
 
 // =================================================================
-// B. サーバーサイド・クラス定義 (変更なし)
+// B. サーバーサイド・クラス定義
 // =================================================================
 
 class ServerStation {
@@ -347,8 +360,8 @@ async function loadUserData(userId) {
     const user = {
         socketId: null,
         userId: userRow.userId,
-        money: userRow.money,
-        totalConstructionCost: userRow.totalConstructionCost,
+        money: Number(userRow.money), // BIGINTは文字列になる場合があるためNumberに変換
+        totalConstructionCost: Number(userRow.totalConstructionCost),
         establishedLines: [],
         vehicles: [],
     };
@@ -356,7 +369,7 @@ async function loadUserData(userId) {
     // 路線のロード
     const linesRes = await dbQuery('SELECT * FROM lines WHERE "ownerId" = $1', [userId]);
     const lineManagers = linesRes.rows.map(row => {
-        // PostgreSQLではJSON/JSONB型として保存されていると仮定
+        // PostgreSQLのJSONB型は自動的にJavaScriptオブジェクトとして取得される
         const coords = row.coords; 
         const lineStations = coords.map(coord => 
             ServerGame.globalStats.stations.find(s => s.latlng[0] === coord[0] && s.latlng[1] === coord[1])
@@ -364,7 +377,7 @@ async function loadUserData(userId) {
         
         const line = new ServerLineManager(
             row.id, row.ownerId, lineStations, coords, 
-            row.cost, row.lengthKm, row.color, row.trackType
+            Number(row.cost), row.lengthKm, row.color, row.trackType
         );
         return line;
     });
@@ -474,8 +487,9 @@ async function dismantleLine(userId, lineId) {
         const globalStation = ServerGame.globalStats.stations.find(s => s.id === station.id);
         if (globalStation) {
             globalStation.lineConnections = globalStation.lineConnections.filter(id => id !== lineId);
+            // JSONB型の更新
             await dbQuery(`
-                UPDATE stations SET "lineConnections" = $1 WHERE id = $2
+                UPDATE stations SET "lineConnections" = $1::jsonb WHERE id = $2
             `, [JSON.stringify(globalStation.lineConnections), globalStation.id]);
         }
     }
@@ -665,7 +679,7 @@ io.on('connection', (socket) => {
         const latlng = [data.latlng.lat, data.latlng.lng];
         const newStation = new ServerStation(stationId, latlng, userId);
         
-        // DBに駅を保存 (PostgreSQLのJSONB型を想定)
+        // DBに駅を保存 (PostgreSQLのJSONB型を使用)
         await dbQuery(`
             INSERT INTO stations ("id", "ownerId", lat, lng, name, demand, "lineConnections")
             VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb)
@@ -721,7 +735,7 @@ io.on('connection', (socket) => {
 
         user.establishedLines.push(newLineManager);
         
-        // DBに路線を保存 (PostgreSQLのJSONB型を想定)
+        // DBに路線を保存 (PostgreSQLのJSONB型を使用)
         await dbQuery(`
             INSERT INTO lines ("id", "ownerId", coords, cost, "lengthKm", color, "trackType")
             VALUES ($1, $2, $3::jsonb, $4, $5, $6, $7)
@@ -812,67 +826,8 @@ io.on('connection', (socket) => {
 // E. サーバー起動ロジック
 // =================================================================
 
+// スキーマが既にSupabase側で作成されている前提で、ここでは初期データのチェックのみを行う
 async function initializeDatabase() {
-    // PostgreSQLのスキーマ定義
-    await dbQuery(`
-        CREATE TABLE IF NOT EXISTS users (
-            "userId" TEXT PRIMARY KEY,
-            password TEXT NOT NULL,
-            money BIGINT NOT NULL,
-            "totalConstructionCost" BIGINT NOT NULL
-        )
-    `);
-
-    await dbQuery(`
-        CREATE TABLE IF NOT EXISTS global_stats (
-            id INTEGER PRIMARY KEY CHECK (id = 1),
-            "gameTime" TIMESTAMP WITH TIME ZONE NOT NULL,
-            "timeScale" INTEGER NOT NULL,
-            "nextStationId" INTEGER NOT NULL,
-            "nextLineId" INTEGER NOT NULL,
-            "nextVehicleId" INTEGER NOT NULL
-        )
-    `);
-
-    await dbQuery(`
-        CREATE TABLE IF NOT EXISTS stations (
-            id INTEGER PRIMARY KEY,
-            "ownerId" TEXT NOT NULL,
-            lat DOUBLE PRECISION NOT NULL,
-            lng DOUBLE PRECISION NOT NULL,
-            name TEXT NOT NULL,
-            demand JSONB NOT NULL,
-            "lineConnections" JSONB NOT NULL
-        )
-    `);
-
-    await dbQuery(`
-        CREATE TABLE IF NOT EXISTS lines (
-            id INTEGER PRIMARY KEY,
-            "ownerId" TEXT NOT NULL,
-            coords JSONB NOT NULL,
-            cost BIGINT NOT NULL,
-            "lengthKm" DOUBLE PRECISION NOT NULL,
-            color TEXT NOT NULL,
-            "trackType" TEXT NOT NULL
-        )
-    `);
-
-    await dbQuery(`
-        CREATE TABLE IF NOT EXISTS vehicles (
-            id INTEGER PRIMARY KEY,
-            "lineId" INTEGER NOT NULL,
-            "ownerId" TEXT NOT NULL,
-            "dataKey" TEXT NOT NULL,
-            "positionKm" DOUBLE PRECISION NOT NULL,
-            status TEXT NOT NULL,
-            "isReversed" INTEGER NOT NULL,
-            "stopTimer" DOUBLE PRECISION NOT NULL,
-            "currentLat" DOUBLE PRECISION NOT NULL,
-            "currentLng" DOUBLE PRECISION NOT NULL
-        )
-    `);
-
     // グローバル統計の初期値設定
     const statsRes = await dbQuery('SELECT * FROM global_stats WHERE id = 1');
     if (statsRes.rows.length === 0) {
