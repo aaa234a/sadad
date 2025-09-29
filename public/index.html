@@ -20,6 +20,7 @@
         background-color: white;
       }
 
+      /* ❗ Leafletコントロールとして配置するためposition: absolute;は不要 (Leafletが設定) */
       .rail-ui-control,
       #game-stats,
       #login-overlay,
@@ -31,11 +32,12 @@
         box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3);
         font-family: Arial, sans-serif;
         z-index: 1000;
-        position: absolute;
+        /* position: absolute;  Leafletコントロールはこれが自動でつくため削除 */
       }
 
       /* ログインオーバーレイ */
       #login-overlay {
+        position: absolute; /* この要素のみ絶対配置を維持 */
         top: 0;
         left: 0;
         width: 100%;
@@ -55,27 +57,17 @@
 
       /* UIコントロールのスタイル修正: スクロール可能にする */
       .rail-ui-control {
-        top: 10px;
-        left: 10px;
         width: 300px;
         max-height: 95vh; /* 画面の高さに合わせて最大高さを設定 */
         overflow-y: auto; /* 縦方向のスクロールを有効にする */
       }
-
-      /* UIコンソール位置 */
-      #game-stats {
-        top: 10px;
-        right: 10px;
+      /* ❗ Leafletコントロールとして配置するため、個別の位置設定（top/left/right/bottom）はLeafletのpositionオプションに任せる */
+      #game-stats, #ranking-panel {
         width: 300px;
         line-height: 1.5;
       }
-      #ranking-panel {
-        bottom: 10px;
-        right: 10px;
-        width: 300px;
-      }
 
-      /* アコーディオンヘッダー */
+      /* アコーディオンヘッダー以下は変更なし... */
       .accordion-header {
         cursor: pointer;
         background-color: #f0f0f0;
@@ -174,7 +166,6 @@
   <body>
     <div id="map"></div>
 
-    <!-- ログインオーバーレイ -->
     <div id="login-overlay">
       <div id="login-panel">
         <h2>オンライン鉄道シムへようこそ</h2>
@@ -201,7 +192,6 @@
       </div>
     </div>
 
-    <!-- ゲーム統計 (右上のUI) -->
     <div id="game-stats">
       <div class="accordion-header" onclick="toggleAccordion('stats-content')">
         <span>📊 ゲーム統計・時間 <span id="stats-toggle-icon">▼</span></span>
@@ -223,7 +213,6 @@
       </div>
     </div>
 
-    <!-- 建設・車両コントロール (左上のUI) -->
     <div class="rail-ui-control">
       <div
         class="accordion-header"
@@ -250,7 +239,6 @@
             style="margin: 10px 0; border: none; border-top: 1px solid #ccc"
           />
 
-          <!-- 解体モードのボタン -->
           <button
             id="btn-dismantle-station-mode"
             onclick="toggleConstructionMode('dismantle-station')"
@@ -292,7 +280,6 @@
       </div>
     </div>
 
-    <!-- ランキングパネル (右下のUI) -->
     <div id="ranking-panel">
       <div
         class="accordion-header"
@@ -310,7 +297,6 @@
       </div>
     </div>
 
-    <!-- エラーメッセージ表示領域 -->
     <div id="error-message" style="display: none"></div>
     <div id="info-message" style="display: none"></div>
 
@@ -414,30 +400,32 @@
           lines.forEach((line) => this.drawLine(line));
         },
 
-drawLine(line) {
-  let weight = 8;
-  if (line.trackType === "double") weight = 12;
-  else if (line.trackType === "linear") weight = 15;
-  else if (line.trackType === "tram") weight = 6;
+        drawLine(line) {
+          let weight = 8;
+          if (line.trackType === "double") weight = 12;
+          else if (line.trackType === "linear") weight = 15;
+          else if (line.trackType === "tram") weight = 6;
 
-  const finalStyle = {
-    color: line.color,
-    weight: weight,
-    opacity: 1,
-    lineCap: "round",
-  };
-  const polyline = L.polyline(line.coords, finalStyle).addTo(map);
+          const finalStyle = {
+            color: line.color,
+            weight: weight,
+            opacity: 1,
+            lineCap: "round",
+          };
+          const polyline = L.polyline(line.coords, finalStyle).addTo(map);
 
-  // 👇 クリックイベントを直で設定
-  polyline.on("click", (e) => {
-    if (Game.mode === "dismantle-line") {
-      handleLineDismantle({ latlng: e.latlng, lineId: line.id });
-      L.DomEvent.stopPropagation(e); // マップ側に伝播しない
-    }
-  });
+          // 👇 クリックイベントを直で設定
+          polyline.on("click", (e) => {
+            if (Game.mode === "dismantle-line") {
+              // 路線解体処理を呼び出す際に、イベントオブジェクトと路線IDを渡す
+              handleLineDismantle(e, line.id);
+              L.DomEvent.stopPropagation(e); // マップ側に伝播しない
+            }
+          });
 
-  this.allLines[line.id] = polyline;
-}
+          this.allLines[line.id] = polyline;
+        }
+      };
 
 
       let socket;
@@ -548,6 +536,8 @@ drawLine(line) {
         });
 
         socket.on("stationBuilt", (data) => {
+          // 既存の駅が重複しないようにチェックする必要があるかもしれませんが、
+          // サーバーからの通知ベースなので、ここでは既存コードの通り、そのまま追加します。
           new Station(data.id, data.latlng, map, data.ownerId);
         });
 
@@ -599,6 +589,15 @@ drawLine(line) {
         });
       }
 
+      function showInfo(message) {
+        const infoDiv = document.getElementById("info-message");
+        infoDiv.textContent = message;
+        infoDiv.style.display = "block";
+        setTimeout(() => {
+          infoDiv.style.display = "none";
+        }, 3000);
+      }
+      
       function updateTrainPositions(trainPositions) {
         trainPositions.forEach((train) => {
           if (Game.allTrainMarkers[train.id]) {
@@ -649,7 +648,7 @@ drawLine(line) {
         if (Game.mode !== "dismantle-station" || !socket) return;
 
         if (station.ownerId !== Game.userId) {
-          alert("自分の駅しか解体できません。");
+          showInfo("自分の駅しか解体できません。");
           return;
         }
 
@@ -669,7 +668,7 @@ drawLine(line) {
         if (Game.mode === "track") {
           // 路線建設モード
           if (station.ownerId !== Game.userId) {
-            alert("他プレイヤーの駅は路線のノードとして使用できません。");
+            showInfo("他プレイヤーの駅は路線のノードとして使用できません。");
             return;
           }
 
@@ -709,7 +708,7 @@ drawLine(line) {
 
       function finalizeLine() {
         if (lineCandidateNodes.length < 2 || !socket) {
-          alert("路線には2つ以上の駅が必要です。");
+          showInfo("路線には2つ以上の駅が必要です。");
           return;
         }
 
@@ -729,80 +728,30 @@ drawLine(line) {
         toggleConstructionMode("idle");
       }
 
-function handleLineDismantle(e) {
-  if (Game.mode !== "dismantle-line" || !socket) return;
+      // 路線解体は、クリックされたポリラインから直接 line.id を取得できるため、
+      // 距離計算による最近接検索のロジックを簡素化します。
+      function handleLineDismantle(e, lineId) {
+        if (Game.mode !== "dismantle-line" || !socket) return;
+        
+        const line = Game.establishedLines.find(l => l.id === lineId);
 
-  if (Game.establishedLines.length === 0) {
-    showInfo("解体可能な路線がありません");
-    return;
-  }
+        if (!line) {
+          // 自分の establishedLines にない（他人の路線、またはエラー）
+          showInfo("自分の路線しか解体できません。");
+          return;
+        }
 
-  const clickLatLng = e.latlng;
-  let closestLine = null;
-  let closestDistance = Infinity;
-  const searchRadiusMeters = 50;
-
-  // 自分の路線だけ走査
-  Game.establishedLines.forEach((line) => {
-    const latlngs = line.coords.map((c) => L.latLng(c[0], c[1]));
-
-    // 各セグメントに対して最近接点距離を計算
-    for (let i = 0; i < latlngs.length - 1; i++) {
-      const p1 = latlngs[i];
-      const p2 = latlngs[i + 1];
-      const dist = pointToSegmentDistance(clickLatLng, p1, p2);
-      if (dist < closestDistance && dist < searchRadiusMeters) {
-        closestDistance = dist;
-        closestLine = line;
+        // 路線データの cost プロパティがサーバーから提供されていると仮定
+        const dismantleCost = Math.round((line.cost || 0) * 0.1); 
+        if (confirm(`路線 ${line.id} を解体しますか？ (費用: ¥${dismantleCost.toLocaleString()})`)) {
+          socket.emit("dismantleLine", { lineId: line.id });
+        }
       }
-    }
-  });
 
-  if (!closestLine) {
-    showInfo("クリック付近に解体可能な路線がありません");
-    return;
-  }
-
-  const dismantleCost = Math.round((closestLine.cost || 0) * 0.1);
-  if (confirm(`路線 ${closestLine.id} を解体しますか？ (費用: ¥${dismantleCost.toLocaleString()})`)) {
-    socket.emit("dismantleLine", { lineId: closestLine.id });
-  }
-}
-
-// ポイントから線分までの最短距離 (Leaflet LatLng使用)
-function pointToSegmentDistance(p, p1, p2) {
-  // 緯度経度を平面座標に近似
-  const x = p.lng, y = p.lat;
-  const x1 = p1.lng, y1 = p1.lat;
-  const x2 = p2.lng, y2 = p2.lat;
-
-  const A = x - x1;
-  const B = y - y1;
-  const C = x2 - x1;
-  const D = y2 - y1;
-
-  const dot = A * C + B * D;
-  const len_sq = C * C + D * D;
-  let param = -1;
-  if (len_sq !== 0) param = dot / len_sq;
-
-  let xx, yy;
-  if (param < 0) {
-    xx = x1; yy = y1;
-  } else if (param > 1) {
-    xx = x2; yy = y2;
-  } else {
-    xx = x1 + param * C;
-    yy = y1 + param * D;
-  }
-
-  const dx = x - xx;
-  const dy = y - yy;
-  // 距離をメートル換算
-  return map.distance([y, x], [yy, xx]);
-}
-
-
+      // ❗ この関数 (pointToSegmentDistance) は Leaflet polyline のクリックイベントで
+      // 路線IDが渡されるようになったため、不要になりましたが、
+      // もしクリックがポリラインを正確に捉えなかった場合のフォールバックとして残すこともできます。
+      // 現状では、`drawLine`内のクリックイベントにより、クリックされたポリラインのIDが直接渡されます。
 
       // =========================================================
       // E. UIとイベント処理
@@ -817,7 +766,7 @@ function pointToSegmentDistance(p, p1, p2) {
         L.DomUtil.removeClass(mapContainer, "dismantle-line-mode");
 
         map.off("click", handleStationCreation);
-        map.off("click", handleLineDismantle);
+        // map.off("click", handleLineDismantle); // 路線クリックイベントはポリラインに設定されているため、マップクリックイベントは不要
 
         if (drawingPolyline) map.removeLayer(drawingPolyline);
         drawingPolyline = null;
@@ -825,6 +774,7 @@ function pointToSegmentDistance(p, p1, p2) {
 
         Game.mode = newMode;
 
+        // ボタンのハイライトをリセット
         document
           .querySelectorAll(".rail-ui-control button")
           .forEach((btn) => btn.classList.remove("active"));
@@ -846,9 +796,10 @@ function pointToSegmentDistance(p, p1, p2) {
           document
             .getElementById("btn-dismantle-line-mode")
             .classList.add("active");
-          map.on("click", handleLineDismantle);
+          // map.on("click", handleLineDismantle); // 路線クリックイベントはポリラインに設定されているため、マップクリックイベントは不要
         } else {
-          document.getElementById("btn-station-mode").classList.add("active"); // アイドル状態の強調
+          // アイドル状態では、建設モードに入っているボタンは全て非アクティブに
+          // document.getElementById("btn-station-mode").classList.add("active"); // アイドル状態の強調はしない
         }
       }
 
@@ -940,9 +891,10 @@ function pointToSegmentDistance(p, p1, p2) {
       window.toggleConstructionMode = toggleConstructionMode;
       window.finalizeLine = finalizeLine;
       window.Game = Game;
+      window.showInfo = showInfo;
 
       document.addEventListener("DOMContentLoaded", () => {
-        // 1. Leafletマップの初期化を最初に行う
+        // 1. Leafletマップの初期化
         map = L.map("map").setView([INITIAL_LAT, INITIAL_LNG], 13);
         L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
           attribution: "© OpenStreetMap contributors (Base)",
@@ -953,19 +905,36 @@ function pointToSegmentDistance(p, p1, p2) {
           { attribution: "国土地理院", opacity: 0.5 }
         ).addTo(map);
 
-        // 2. UIコントロールをマップに追加
+        // 2. UIコントロールをマップに追加 (LeafletコントロールとしてDOM要素を再利用)
+        
+        // 建設・車両コントロール
         const controlDiv = document.querySelector(".rail-ui-control");
-        const controlHtml = controlDiv.innerHTML;
-        controlDiv.remove();
-
         const constructControl = L.control({ position: "topleft" });
         constructControl.onAdd = function (map) {
-          const div = L.DomUtil.create("div", "rail-ui-control");
-          div.innerHTML = controlHtml;
-          L.DomEvent.disableClickPropagation(div);
-          return div;
+          // 既存のDOM要素をそのまま返す
+          L.DomEvent.disableClickPropagation(controlDiv);
+          return controlDiv;
         };
         constructControl.addTo(map);
+        
+        // ゲーム統計
+        const statsDiv = document.getElementById("game-stats");
+        const statsControl = L.control({ position: "topright" });
+        statsControl.onAdd = function (map) {
+          L.DomEvent.disableClickPropagation(statsDiv);
+          return statsDiv;
+        };
+        statsControl.addTo(map);
+
+        // ランキングパネル
+        const rankingDiv = document.getElementById("ranking-panel");
+        const rankingControl = L.control({ position: "bottomright" });
+        rankingControl.onAdd = function (map) {
+          L.DomEvent.disableClickPropagation(rankingDiv);
+          return rankingDiv;
+        };
+        rankingControl.addTo(map);
+
 
         // 3. 建設モードの初期化
         toggleConstructionMode("idle");
