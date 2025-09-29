@@ -1,7 +1,7 @@
 // =========================================================
 // A. ゲーム定数と状態 (クライアント側)
 // =========================================================
-const SERVER_URL = "http://hot.ssnetwork.io:40771";
+const SERVER_URL = "https://9d7113d01beb.ngrok-free.app";
 
 const INITIAL_LAT = 35.681236;
 const INITIAL_LNG = 139.767125;
