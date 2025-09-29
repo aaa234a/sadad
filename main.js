@@ -105,11 +105,28 @@ const Game = {
       opacity: 1,
       lineCap: "round",
     };
-    this.allLines[line.id] = L.polyline(line.coords, finalStyle)
+
+    const polyline = L.polyline(line.coords, finalStyle)
       .addTo(map)
       .bindPopup(
         `<b>Line ${line.id}</b> (${line.trackType})<br>Owner: ${line.ownerId}`
       );
+
+    // ★修正箇所2: 路線クリックイベントを追加し、解体モードの場合はポップアップを閉じる★
+    polyline.on("click", (e) => {
+      if (Game.mode.startsWith("dismantle-")) {
+        polyline.closePopup();
+
+        // dismantle-stationモードの場合は、路線クリックは無視し、マップへの伝播も止める
+        if (Game.mode === "dismantle-station") {
+          L.DomEvent.stopPropagation(e);
+        }
+        // dismantle-lineモードの場合は、ポップアップを閉じるが、
+        // マップイベントに伝播させてhandleLineDismantleを呼び出す
+      }
+    });
+
+    this.allLines[line.id] = polyline;
   },
 };
 
@@ -141,6 +158,10 @@ class Station {
       if (Game.mode === "track" || Game.mode === "dismantle-station") {
         handleStationClick(this);
         L.DomEvent.stopPropagation(e);
+      } else if (Game.mode.startsWith("dismantle-")) {
+        // ★修正箇所1: 解体モード全般でポップアップを抑制★
+        L.DomEvent.stopPropagation(e);
+        this.marker.closePopup();
       }
     });
     Game.stations.push(this);
