@@ -720,51 +720,50 @@
         toggleConstructionMode("idle");
       }
 
-      function handleLineDismantle(e) {
-        if (Game.mode !== "dismantle-line" || !socket) return;
+function handleLineDismantle(e) {
+  if (Game.mode !== "dismantle-line" || !socket) return;
 
-        let closestLine = null;
-        let minDistance = Infinity;
-        const lineSearchRadiusMeters = 50; // 50m以内を許容範囲とする
+  let closestLine = null;
+  let closestLineId = null;
+  let minDistance = Infinity;
+  const lineSearchRadiusMeters = 50; // 50m以内を許容範囲とする
 
-        const myLines = Game.establishedLines
-          .map((line) => Game.allLines[line.id])
-          .filter((l) => l);
-
-        myLines.forEach((polyline) => {
-          const latlngs = polyline.getLatLngs();
-          latlngs.forEach((latlng) => {
-            // Leafletの距離計算はメートル単位
-            const dist = e.latlng.distanceTo(latlng);
-            if (dist < minDistance && dist < lineSearchRadiusMeters) {
-              minDistance = dist;
-              closestLine = polyline;
-            }
-          });
-        });
-
-        if (closestLine) {
-          const lineId = Object.keys(Game.allLines).find(
-            (key) => Game.allLines[key] === closestLine
-          );
-          const lineData = Game.establishedLines.find((l) => l.id == lineId);
-
-          if (lineData && lineData.ownerId === Game.userId) {
-            const dismantleCost = Math.round(lineData.cost * 0.1);
-            if (
-              confirm(
-                `路線 ${lineId} を解体しますか？ (費用: ¥${dismantleCost.toLocaleString()}、車両は購入価格の1/3で自動売却されます)`
-              )
-            ) {
-              socket.emit("dismantleLine", { lineId: parseInt(lineId) });
-            }
-          }
-        } else {
-          alert(
-            "クリックした位置の近くに解体できるあなたの路線が見つかりません。"
-          );
-        }
+  // 🔹全ての路線を対象にする
+  Object.entries(Game.allLines).forEach(([lineId, polyline]) => {
+    const latlngs = polyline.getLatLngs();
+    latlngs.forEach((latlng) => {
+      const dist = e.latlng.distanceTo(latlng);
+      if (dist < minDistance && dist < lineSearchRadiusMeters) {
+        minDistance = dist;
+        closestLine = polyline;
+        closestLineId = lineId;
       }
+    });
+  });
+
+  if (!closestLine || !closestLineId) {
+    alert("クリックした位置の近くに解体できる路線が見つかりません。");
+    return;
+  }
+
+  // 🔹lineIdからlineDataを取得
+  const lineData = Game.establishedLines.find((l) => l.id == closestLineId);
+
+  // 🔹オーナー確認（自分の路線しか解体できない）
+  if (!lineData || lineData.ownerId !== Game.userId) {
+    alert("自分の路線のみ解体可能です。");
+    return;
+  }
+
+  const dismantleCost = Math.round(lineData.cost * 0.1);
+  if (
+    confirm(
+      `路線 ${closestLineId} を解体しますか？ (費用: ¥${dismantleCost.toLocaleString()}、車両は購入価格の1/3で自動売却されます)`
+    )
+  ) {
+    socket.emit("dismantleLine", { lineId: parseInt(closestLineId) });
+  }
+}
 
       // =========================================================
       // E. UIとイベント処理
