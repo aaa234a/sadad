@@ -659,22 +659,32 @@ io.on('connection', (socket) => {
             coords: line.coords, color: line.color, 
             trackType: line.trackType 
         }));
-// login処理の最後に:
+// まず allLines を作成
 const allLines = Object.values(ServerGame.users)
   .flatMap(user => user.establishedLines)
   .map(line => ({
-    id: line.id, ownerId: line.ownerId,
-    coords: line.coords, color: line.color,
+    id: line.id,
+    ownerId: line.ownerId,
+    coords: line.coords,
+    color: line.color,
     trackType: line.trackType
   }));
+
+// 送信するデータ
 socket.emit('initialState', {
   money: userState.money,
   totalConstructionCost: userState.totalConstructionCost,
-  establishedLines: allLines, // ここを全路線に
-  vehicles: ...,
-  stations: ServerGame.globalStats.stations.map(...),
+  establishedLines: allLines, // ←全路線を渡す
+  vehicles: userState.vehicles, // ←ここをちゃんと書く
+  stations: ServerGame.globalStats.stations.map(s => ({
+    id: s.id,
+    name: s.name,
+    coords: s.coords,
+    ownerId: s.ownerId
+  })),
   vehicleData: ServerGame.VehicleData
 });
+
 
     });
     socket.on('buildStation', async (data) => {
