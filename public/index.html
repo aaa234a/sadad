@@ -414,22 +414,31 @@
           lines.forEach((line) => this.drawLine(line));
         },
 
-        drawLine(line) {
-          let weight = 8;
-          if (line.trackType === "double") weight = 12;
-          else if (line.trackType === "linear") weight = 15;
-          else if (line.trackType === "tram") weight = 6;
+drawLine(line) {
+  let weight = 8;
+  if (line.trackType === "double") weight = 12;
+  else if (line.trackType === "linear") weight = 15;
+  else if (line.trackType === "tram") weight = 6;
 
-          const finalStyle = {
-            color: line.color,
-            weight: weight,
-            opacity: 1,
-            lineCap: "round",
-          };
-          this.allLines[line.id] = L.polyline(line.coords, finalStyle)
-            .addTo(map);
-        },
-      };
+  const finalStyle = {
+    color: line.color,
+    weight: weight,
+    opacity: 1,
+    lineCap: "round",
+  };
+  const polyline = L.polyline(line.coords, finalStyle).addTo(map);
+
+  // 👇 クリックイベントを直で設定
+  polyline.on("click", (e) => {
+    if (Game.mode === "dismantle-line") {
+      handleLineDismantle({ latlng: e.latlng, lineId: line.id });
+      L.DomEvent.stopPropagation(e); // マップ側に伝播しない
+    }
+  });
+
+  this.allLines[line.id] = polyline;
+}
+
 
       let socket;
       let drawingPolyline = null;
@@ -726,9 +735,8 @@ function handleLineDismantle(e) {
   let closestLine = null;
   let closestLineId = null;
   let minDistance = Infinity;
-  const lineSearchRadiusMeters = 50; // 50m以内を許容範囲とする
+  const lineSearchRadiusMeters = 50;
 
-  // 🔹全ての路線を対象にする
   Object.entries(Game.allLines).forEach(([lineId, polyline]) => {
     const latlngs = polyline.getLatLngs();
     latlngs.forEach((latlng) => {
@@ -746,24 +754,18 @@ function handleLineDismantle(e) {
     return;
   }
 
-  // 🔹lineIdからlineDataを取得
   const lineData = Game.establishedLines.find((l) => l.id == closestLineId);
-
-  // 🔹オーナー確認（自分の路線しか解体できない）
   if (!lineData || lineData.ownerId !== Game.userId) {
     alert("自分の路線のみ解体可能です。");
     return;
   }
 
   const dismantleCost = Math.round(lineData.cost * 0.1);
-  if (
-    confirm(
-      `路線 ${closestLineId} を解体しますか？ (費用: ¥${dismantleCost.toLocaleString()}、車両は購入価格の1/3で自動売却されます)`
-    )
-  ) {
+  if (confirm(`路線 ${closestLineId} を解体しますか？ (費用: ¥${dismantleCost.toLocaleString()})`)) {
     socket.emit("dismantleLine", { lineId: parseInt(closestLineId) });
   }
 }
+
 
       // =========================================================
       // E. UIとイベント処理
