@@ -20,7 +20,6 @@
         background-color: white;
       }
 
-      /* ❗ Leafletコントロールとして配置するためposition: absolute;は不要 (Leafletが設定) */
       .rail-ui-control,
       #game-stats,
       #login-overlay,
@@ -32,12 +31,11 @@
         box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3);
         font-family: Arial, sans-serif;
         z-index: 1000;
-        /* position: absolute;  Leafletコントロールはこれが自動でつくため削除 */
       }
 
       /* ログインオーバーレイ */
       #login-overlay {
-        position: absolute; /* この要素のみ絶対配置を維持 */
+        position: absolute;
         top: 0;
         left: 0;
         width: 100%;
@@ -58,16 +56,15 @@
       /* UIコントロールのスタイル修正: スクロール可能にする */
       .rail-ui-control {
         width: 300px;
-        max-height: 95vh; /* 画面の高さに合わせて最大高さを設定 */
-        overflow-y: auto; /* 縦方向のスクロールを有効にする */
+        max-height: 95vh;
+        overflow-y: auto;
       }
-      /* ❗ Leafletコントロールとして配置するため、個別の位置設定（top/left/right/bottom）はLeafletのpositionオプションに任せる */
       #game-stats, #ranking-panel {
         width: 300px;
         line-height: 1.5;
       }
 
-      /* アコーディオンヘッダー以下は変更なし... */
+      /* アコーディオンヘッダー */
       .accordion-header {
         cursor: pointer;
         background-color: #f0f0f0;
@@ -113,15 +110,21 @@
         margin-bottom: 10px;
       }
 
-      /* 列車アイコンの調整 */
+      /* 列車アイコンの調整 (L.divIconのラッパーとして機能) */
+      .train-icon-container {
+        /* L.divIconのデフォルトスタイルを上書き */
+        background: none !important; 
+        border: none !important;
+      }
       .train-icon {
         width: 12px;
         height: 12px;
         border-radius: 50%;
         border: 2px solid #fff;
         box-shadow: 0 0 5px rgba(0, 0, 0, 0.8);
-        transform: translate(-50%, -50%);
+        transform: translate(-50%, -50%); /* 中央配置 */
       }
+      
       .station-icon {
         background-color: #000;
         width: 15px;
@@ -381,8 +384,11 @@
         },
 
         drawStations(stations) {
+          // 既存のマーカーを削除
           this.stations.forEach((s) => map.removeLayer(s.marker));
           this.stations = [];
+          
+          // 新しいマーカーを描画
           stations.forEach(
             (s) =>
               new Station(
@@ -414,10 +420,9 @@
           };
           const polyline = L.polyline(line.coords, finalStyle).addTo(map);
 
-          // 👇 クリックイベントを直で設定
+          // クリックイベントを直で設定
           polyline.on("click", (e) => {
             if (Game.mode === "dismantle-line") {
-              // 路線解体処理を呼び出す際に、イベントオブジェクトと路線IDを渡す
               handleLineDismantle(e, line.id);
               L.DomEvent.stopPropagation(e); // マップ側に伝播しない
             }
@@ -439,7 +444,8 @@
           this.ownerId = ownerId;
           this.name = `駅 ${id}`;
 
-          const stationColor = ownerId === Game.userId ? "#0044BB" : "#FF0000";
+          // ❗ 修正点: ownerId と Game.userId の型を一致させて比較
+          const stationColor = String(ownerId) === String(Game.userId) ? "#0044BB" : "#FF0000";
 
           this.marker = L.marker(latlng, {
             icon: L.divIcon({
@@ -509,10 +515,16 @@
       }
 
       function connectSocket(userId) {
-        socket = io();
+        // userIdをクエリパラメータとして渡すことで、サーバー側でセッション管理が可能になる
+        socket = io({
+          query: {
+            userId: userId
+          }
+        });
 
         socket.on("connect", () => {
-          socket.emit("login", { userId: userId });
+          // ログインが完了しているため、ここでは認証情報を再確認
+          socket.emit("clientReady", { userId: userId });
         });
 
         socket.on("initialState", (data) => {
@@ -536,8 +548,6 @@
         });
 
         socket.on("stationBuilt", (data) => {
-          // 既存の駅が重複しないようにチェックする必要があるかもしれませんが、
-          // サーバーからの通知ベースなので、ここでは既存コードの通り、そのまま追加します。
           new Station(data.id, data.latlng, map, data.ownerId);
         });
 
@@ -601,14 +611,19 @@
       function updateTrainPositions(trainPositions) {
         trainPositions.forEach((train) => {
           if (Game.allTrainMarkers[train.id]) {
+            // 既存のマーカーの位置を更新
             Game.allTrainMarkers[train.id].setLatLng(train.latlng);
           } else {
+            // ❗ 修正点: 列車アイコンをL.divIconとして適切に描画する
             const marker = L.divIcon({
-              className: "train-icon",
-              style: `background-color: ${train.color}; border-color: ${
-                train.owner === Game.userId ? "yellow" : "white"
-              };`,
+              className: "train-icon-container", // CSSで定義されたコンテナクラス
+              iconSize: [16, 16], // アイコンのサイズを定義
+              // styleで動的に色を設定した子divをhtmlプロパティに設定
+              html: `<div class="train-icon" style="background-color: ${train.color}; border-color: ${
+                String(train.owner) === String(Game.userId) ? "yellow" : "white"
+              };"></div>`,
             });
+            
             Game.allTrainMarkers[train.id] = L.marker(train.latlng, {
               icon: marker,
             }).addTo(map);
@@ -617,6 +632,8 @@
             );
           }
         });
+
+        // サーバーから送られてこなくなった列車をマップから削除するロジックはサーバー実装に依存するため、ここでは省略
       }
 
       function updateRankingUI(ranking) {
@@ -647,7 +664,7 @@
       function handleStationDismantle(station) {
         if (Game.mode !== "dismantle-station" || !socket) return;
 
-        if (station.ownerId !== Game.userId) {
+        if (String(station.ownerId) !== String(Game.userId)) {
           showInfo("自分の駅しか解体できません。");
           return;
         }
@@ -667,7 +684,7 @@
       function handleStationClick(station) {
         if (Game.mode === "track") {
           // 路線建設モード
-          if (station.ownerId !== Game.userId) {
+          if (String(station.ownerId) !== String(Game.userId)) {
             showInfo("他プレイヤーの駅は路線のノードとして使用できません。");
             return;
           }
@@ -728,30 +745,22 @@
         toggleConstructionMode("idle");
       }
 
-      // 路線解体は、クリックされたポリラインから直接 line.id を取得できるため、
-      // 距離計算による最近接検索のロジックを簡素化します。
       function handleLineDismantle(e, lineId) {
         if (Game.mode !== "dismantle-line" || !socket) return;
         
+        // establishedLinesは自分の路線のリスト
         const line = Game.establishedLines.find(l => l.id === lineId);
 
         if (!line) {
-          // 自分の establishedLines にない（他人の路線、またはエラー）
           showInfo("自分の路線しか解体できません。");
           return;
         }
 
-        // 路線データの cost プロパティがサーバーから提供されていると仮定
         const dismantleCost = Math.round((line.cost || 0) * 0.1); 
         if (confirm(`路線 ${line.id} を解体しますか？ (費用: ¥${dismantleCost.toLocaleString()})`)) {
           socket.emit("dismantleLine", { lineId: line.id });
         }
       }
-
-      // ❗ この関数 (pointToSegmentDistance) は Leaflet polyline のクリックイベントで
-      // 路線IDが渡されるようになったため、不要になりましたが、
-      // もしクリックがポリラインを正確に捉えなかった場合のフォールバックとして残すこともできます。
-      // 現状では、`drawLine`内のクリックイベントにより、クリックされたポリラインのIDが直接渡されます。
 
       // =========================================================
       // E. UIとイベント処理
@@ -766,7 +775,6 @@
         L.DomUtil.removeClass(mapContainer, "dismantle-line-mode");
 
         map.off("click", handleStationCreation);
-        // map.off("click", handleLineDismantle); // 路線クリックイベントはポリラインに設定されているため、マップクリックイベントは不要
 
         if (drawingPolyline) map.removeLayer(drawingPolyline);
         drawingPolyline = null;
@@ -796,10 +804,6 @@
           document
             .getElementById("btn-dismantle-line-mode")
             .classList.add("active");
-          // map.on("click", handleLineDismantle); // 路線クリックイベントはポリラインに設定されているため、マップクリックイベントは不要
-        } else {
-          // アイドル状態では、建設モードに入っているボタンは全て非アクティブに
-          // document.getElementById("btn-station-mode").classList.add("active"); // アイドル状態の強調はしない
         }
       }
 
@@ -911,8 +915,8 @@
         const controlDiv = document.querySelector(".rail-ui-control");
         const constructControl = L.control({ position: "topleft" });
         constructControl.onAdd = function (map) {
-          // 既存のDOM要素をそのまま返す
           L.DomEvent.disableClickPropagation(controlDiv);
+          L.DomEvent.disableScrollPropagation(controlDiv);
           return controlDiv;
         };
         constructControl.addTo(map);
@@ -922,6 +926,7 @@
         const statsControl = L.control({ position: "topright" });
         statsControl.onAdd = function (map) {
           L.DomEvent.disableClickPropagation(statsDiv);
+          L.DomEvent.disableScrollPropagation(statsDiv);
           return statsDiv;
         };
         statsControl.addTo(map);
@@ -931,6 +936,7 @@
         const rankingControl = L.control({ position: "bottomright" });
         rankingControl.onAdd = function (map) {
           L.DomEvent.disableClickPropagation(rankingDiv);
+          L.DomEvent.disableScrollPropagation(rankingDiv);
           return rankingDiv;
         };
         rankingControl.addTo(map);
