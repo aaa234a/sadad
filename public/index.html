@@ -343,6 +343,7 @@
         currentTrackType: "single",
 
         updateStats(data) {
+          // 資金、建設コスト、車両、路線情報を更新
           this.money = data.money !== undefined ? data.money : this.money;
           this.totalConstructionCost =
             data.totalConstructionCost !== undefined
@@ -356,21 +357,26 @@
             data.vehicles !== undefined ? data.vehicles : this.vehicles;
 
           if (data.stations) this.drawStations(data.stations);
-          // 自分の路線リストは更新するが、描画はallLinesに任せるため、以下の行は削除
-          // if (data.establishedLines) this.drawLines(data.establishedLines);
+          if (data.allLines) this.drawLines(data.allLines);
 
-          const totalAsset =
-            this.money +
-            this.totalConstructionCost * 0.7 +
-            this.vehicles.length * VEHICLE_BASE_COST;
-          document.getElementById("money-display").textContent = `¥${Math.round(
-            this.money
-          ).toLocaleString()}`;
-          document.getElementById("asset-display").textContent = `¥${Math.round(
-            totalAsset
-          ).toLocaleString()}`;
-          document.getElementById("vehicle-count").textContent =
-            this.vehicles.length;
+          this.updateFinancialUI();
+        },
+        
+        updateFinancialUI() {
+            // 総資産の再計算: 資金 + 建設コストの70% (減価償却を考慮) + 車両の購入価格
+            const totalAsset =
+                this.money +
+                this.totalConstructionCost * 0.7 +
+                this.vehicles.length * VEHICLE_BASE_COST;
+                
+            document.getElementById("money-display").textContent = `¥${Math.round(
+                this.money
+            ).toLocaleString()}`;
+            document.getElementById("asset-display").textContent = `¥${Math.round(
+                totalAsset
+            ).toLocaleString()}`;
+            document.getElementById("vehicle-count").textContent =
+                this.vehicles.length;
         },
 
         updateGlobalStats(data) {
@@ -385,6 +391,9 @@
           ).toLocaleString()}`;
           document.getElementById("station-count").textContent =
             data.globalStats.stationsCount;
+            
+          // 資金が変動している可能性があるため、財務UIを更新
+          this.updateFinancialUI();
         },
 
         formatDateTime(date) {
@@ -536,11 +545,13 @@
         });
 
         socket.on("updateUserState", (data) => {
+          // 資金、建設コスト、車両リストが更新される
           Game.updateStats(data);
           updateVehicleBuyUI();
         });
 
         socket.on("gameUpdate", (data) => {
+          // 時間、月次維持費、駅数などが更新される
           Game.updateGlobalStats(data);
           updateTrainPositions(data.trainPositions);
         });
@@ -551,6 +562,8 @@
 
         socket.on("stationBuilt", (data) => {
           new Station(data.id, data.latlng, map, data.ownerId);
+          // 駅数が変わったので、グローバル統計を再描画
+          Game.updateGlobalStats({ globalStats: { stationsCount: Game.stations.length } });
         });
 
         socket.on("lineBuilt", (data) => {
@@ -574,6 +587,8 @@
             map.removeLayer(Game.stations[stationIndex].marker);
             Game.stations.splice(stationIndex, 1);
           }
+          // 駅数が変わったので、グローバル統計を再描画
+          Game.updateGlobalStats({ globalStats: { stationsCount: Game.stations.length } });
         });
 
         socket.on("error", (message) => {
