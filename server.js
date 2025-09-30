@@ -202,7 +202,8 @@ class ServerVehicle {
             return;
         }
         if (this.status !== 'Running') return;
-        const speedKms = this.data.maxSpeedKmH / 3600;
+        // 修正: 時速(Km/h)を秒速(Km/s)に変換 (60分 * 60秒 = 3600秒)
+        const speedKms = this.data.maxSpeedKmH / 3600; 
         const travelDistanceKm = speedKms * gameDeltaSeconds; 
         
         const direction = this.isReversed ? -1 : 1;
@@ -238,14 +239,19 @@ class ServerVehicle {
         this.currentLng = prevCoord[1] * (1 - progress) + nextCoord[1] * progress;
     }
     checkStationArrival() {
-        const arrivalTolerance = 0.05; 
+        const arrivalTolerance = 0.05; // 50メートル
+        const COORD_TOLERANCE = 0.000001; // 緯度経度の比較用許容誤差
         this.stations.forEach((station, index) => {
             // 路線が往復する場合、駅は2回登場する可能性があるため、全座標をチェック
+            // 修正: 浮動小数点数の厳密な比較を避け、許容誤差を使用
             const stationKm = this.totalRouteKm.find((km, i) => 
-                this.coords[i][0] === station.latlng[0] && this.coords[i][1] === station.latlng[1]
+                Math.abs(this.coords[i][0] - station.latlng[0]) < COORD_TOLERANCE && 
+                Math.abs(this.coords[i][1] - station.latlng[1]) < COORD_TOLERANCE
             );
             
             if (stationKm !== undefined && Math.abs(this.positionKm - stationKm) < arrivalTolerance && this.status === 'Running') {
+                // 停車時に位置を正確に駅に合わせる
+                this.positionKm = stationKm; 
                 this.handleStationArrival(station);
             }
         });
