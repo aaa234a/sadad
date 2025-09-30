@@ -202,7 +202,7 @@ class ServerVehicle {
             return;
         }
         if (this.status !== 'Running') return;
-        const speedKms = this.data.maxSpeedKmH / 60;
+        const speedKms = this.data.maxSpeedKmH / 3600;
         const travelDistanceKm = speedKms * gameDeltaSeconds; 
         
         const direction = this.isReversed ? -1 : 1;
