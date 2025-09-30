@@ -343,7 +343,7 @@ const ServerGame = {
         gameTime: new Date(2025, 0, 1, 0, 0, 0),
         timeScale: 3600, 
         stations: [], 
-        allLines: [], // 1. 全路線の情報を保持
+        allLines: [], 
         lastMonthlyMaintenance: 0,
         nextStationId: 1,
         nextLineId: 1,
@@ -450,18 +450,13 @@ async function calculateMonthlyMaintenance() {
     ServerGame.globalStats.lastMonthlyMaintenance = totalCost;
 }
 
-// 3. ランキング計算をDBの全ユーザーを対象に修正
 async function calculateRanking() {
     const allUsers = await UserModel.find({}).lean();
     
     const rankingPromises = allUsers.map(async (user) => {
-        // ユーザーの建設コストはDBのtotalConstructionCostを使用
         const totalConstructionCost = user.totalConstructionCost;
-        // 車両数はDBから取得
         const vehicleCount = await VehicleModel.countDocuments({ ownerId: user.userId });
         
-        // 総資産の計算 (車両の価値は購入価格の概算: VEHICLE_BASE_COST * 1.5 (平均倍率) * vehicleCount)
-        // ここでは簡単のため、1台あたり10Mとして計算
         const score = user.money + totalConstructionCost * 0.7 + vehicleCount * 10000000;
         
         return {
@@ -501,11 +496,12 @@ async function dismantleLine(userId, lineId) {
     user.vehicles = user.vehicles.filter(v => v.lineId !== lineId);
     await VehicleModel.deleteMany({ lineId: lineId });
     
+    // 3. 路線を削除
     user.establishedLines.splice(lineIndex, 1);
     user.totalConstructionCost -= lineToDismantle.cost;
     await LineModel.deleteOne({ id: lineId });
     
-    // 1. ServerGame.globalStats.allLines からも削除
+    // 1. ServerGame.globalStats.allLines からも削除 (修正)
     ServerGame.globalStats.allLines = ServerGame.globalStats.allLines.filter(l => l.id !== lineId);
     
     const updatePromises = [];
@@ -653,10 +649,11 @@ io.on('connection', (socket) => {
         const userState = ServerGame.users[userId];
         userState.socketId = socket.id; 
         
+        // 修正: クライアントに送る自分の路線情報に cost を含める
         const clientLines = userState.establishedLines.map(line => ({ 
             id: line.id, ownerId: line.ownerId, 
             coords: line.coords, color: line.color, 
-            trackType: line.trackType, cost: line.cost 
+            trackType: line.trackType, cost: line.cost // cost を追加
         }));
         
         // 1. 全路線の情報をクライアントに送信
@@ -665,8 +662,8 @@ io.on('connection', (socket) => {
         socket.emit('initialState', {
             money: userState.money,
             totalConstructionCost: userState.totalConstructionCost,
-            establishedLines: clientLines, // 自分の路線マネージャに必要な情報
-            allLines: allClientLines, // 全路線の描画に必要な情報
+            establishedLines: clientLines, // cost を含む
+            allLines: allClientLines, 
             vehicles: userState.vehicles.map(v => ({ id: v.id, data: v.data })), 
             stations: ServerGame.globalStats.stations.map(s => ({ id: s.id, latlng: s.latlng, ownerId: s.ownerId })), 
             vehicleData: ServerGame.VehicleData,
@@ -777,6 +774,7 @@ io.on('connection', (socket) => {
                 id: lineId, ownerId: userId, coords: data.stationCoords, color: lineColor, trackType: data.trackType, cost: totalCost, lengthKm: totalLengthKm
             });
             
+            // 駅の接続情報を更新し、DBに保存
             const updatePromises = [];
             for (const station of lineStations) {
                 station.addLine(lineId);
@@ -791,13 +789,15 @@ io.on('connection', (socket) => {
                 ownerId: userId, id: lineId, coords: data.stationCoords, color: lineColor, 
                 trackType: data.trackType, cost: totalCost, lengthKm: totalLengthKm
             });
+            
+            // 修正: クライアントに送る自分の路線情報に cost を含める
             socket.emit('updateUserState', { 
                 money: user.money, 
                 totalConstructionCost: user.totalConstructionCost,
                 establishedLines: user.establishedLines.map(line => ({ 
                     id: line.id, ownerId: line.ownerId, 
                     coords: line.coords, color: line.color, 
-                    trackType: line.trackType, cost: line.cost 
+                    trackType: line.trackType, cost: line.cost // cost を追加
                 }))
             });
         } catch (error) {
@@ -833,6 +833,7 @@ io.on('connection', (socket) => {
             io.emit('lineDismantled', { lineId: result.lineId, ownerId: userId });
             
             const user = ServerGame.users[userId];
+            // 修正: クライアントに送る自分の路線情報に cost を含める
             socket.emit('updateUserState', {
                 money: user.money,
                 totalConstructionCost: user.totalConstructionCost,
