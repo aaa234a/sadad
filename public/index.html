@@ -955,11 +955,18 @@
 
       document.addEventListener("DOMContentLoaded", () => {
         // 1. Leafletマップの初期化を最初に行う
-        map = L.map("map").setView([INITIAL_LAT, INITIAL_LNG], 13);
+        // 💡 修正: worldCopyJump: true と noWrap: false を追加し、ワールドラッピングを有効化
+        map = L.map("map", {
+            worldCopyJump: true, // マーカーやポリラインがワールドコピー間で正しく表示されるようにする
+            noWrap: false // 経度方向の無限スクロールを有効にする (デフォルトだが明示)
+        }).setView([INITIAL_LAT, INITIAL_LNG], 13);
+        
         L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
           attribution: "© OpenStreetMap contributors (Base)",
           maxZoom: 19,
+          noWrap: false // タイルレイヤー側でも無限スクロールを有効にする
         }).addTo(map);
+        
         L.tileLayer(
           "https://cyberjapandata.gsi.go.jp/xyz/dem5a_color/{z}/{x}/{y}.png",
           { attribution: "国土地理院", opacity: 0.5 }
