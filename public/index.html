@@ -545,13 +545,13 @@
         });
 
         socket.on("updateUserState", (data) => {
-          // 資金、建設コスト、車両リストが更新される
+          // 資金、建設コスト、車両リストが更新される (リアルタイム収益更新を含む)
           Game.updateStats(data);
           updateVehicleBuyUI();
         });
 
         socket.on("gameUpdate", (data) => {
-          // 時間、月次維持費、駅数などが更新される
+          // 時間、月次維持費、駅数などが更新される (全ユーザー向け)
           Game.updateGlobalStats(data);
           updateTrainPositions(data.trainPositions);
         });
@@ -835,6 +835,12 @@
         } else {
           document.getElementById("btn-station-mode").classList.add("active"); // アイドル状態の強調
         }
+        
+        // 💡 修正点 1: モード切り替え時に選択状態を復元
+        const trackTypeSelect = document.getElementById("track-type");
+        if (trackTypeSelect) {
+            trackTypeSelect.value = Game.currentTrackType;
+        }
       }
 
       function updateVehicleBuyUI() {
@@ -948,6 +954,13 @@
           const div = L.DomUtil.create("div", "rail-ui-control");
           div.innerHTML = controlHtml;
           L.DomEvent.disableClickPropagation(div);
+          
+          // 💡 修正点 2: 要素がDOMに追加された直後に選択値を復元
+          const trackTypeSelect = div.querySelector("#track-type");
+          if (trackTypeSelect) {
+              trackTypeSelect.value = Game.currentTrackType;
+          }
+          
           return div;
         };
         constructControl.addTo(map);
