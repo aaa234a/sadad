@@ -754,6 +754,7 @@
         }
 
         // 🔹lineIdからlineDataを取得
+        // Game.establishedLines にはサーバーからコスト情報が含まれて送られてくることを前提とする
         const lineData = Game.establishedLines.find((l) => l.id == closestLineId);
 
         // 🔹オーナー確認（自分の路線しか解体できない）
@@ -762,6 +763,7 @@
           return;
         }
 
+        // 修正: lineData.cost を使用
         const dismantleCost = Math.round(lineData.cost * 0.1);
         if (
           confirm(
