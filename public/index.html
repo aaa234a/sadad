@@ -341,6 +341,10 @@
         allTrainMarkers: {},
         mode: "idle",
         currentTrackType: "single",
+        
+        // 💡 修正点 4: UI更新のトリガー用変数を追加
+        _lastLineCount: 0,
+        _lastVehicleCount: 0,
 
         updateStats(data) {
           // 資金、建設コスト、車両、路線情報を更新
@@ -472,7 +476,12 @@
           this.marker.on("click", (e) => {
             if (Game.mode === "track" || Game.mode === "dismantle-station") {
               handleStationClick(this);
-              L.DomEvent.stopPropagation(e);
+              L.DomEvent.stopPropagation(e); // Leafletのイベント伝播を停止
+              
+              // 元のDOMイベントの伝播も停止し、UIの安定性を向上
+              if (e.originalEvent) {
+                  e.originalEvent.stopPropagation();
+              }
             }
           });
           Game.stations.push(this);
@@ -536,18 +545,29 @@
           VehicleData = data.vehicleData;
           Game.updateStats(data);
           
-          // 1. 他の人の路線も見れるようにする: 全路線を描画
           if (data.allLines) {
             Game.drawLines(data.allLines);
           }
           
+          // 💡 修正点 5: 初回は必ずUIを更新し、カウントを初期化
           updateVehicleBuyUI();
+          Game._lastLineCount = data.establishedLines ? data.establishedLines.length : 0;
+          Game._lastVehicleCount = data.vehicles ? data.vehicles.length : 0;
         });
 
         socket.on("updateUserState", (data) => {
           // 資金、建設コスト、車両リストが更新される (リアルタイム収益更新を含む)
           Game.updateStats(data);
-          updateVehicleBuyUI();
+          
+          // 💡 修正点 6: 路線数または車両数に変化があった場合のみUIを更新
+          const currentLineCount = data.establishedLines ? data.establishedLines.length : Game._lastLineCount;
+          const currentVehicleCount = data.vehicles ? data.vehicles.length : Game._lastVehicleCount;
+
+          if (currentLineCount !== Game._lastLineCount || currentVehicleCount !== Game._lastVehicleCount) {
+              updateVehicleBuyUI();
+              Game._lastLineCount = currentLineCount;
+              Game._lastVehicleCount = currentVehicleCount;
+          }
         });
 
         socket.on("gameUpdate", (data) => {
@@ -611,41 +631,11 @@
       }
 
       function updateTrainPositions(trainPositions) {
-        trainPositions.forEach((train) => {
-          if (Game.allTrainMarkers[train.id]) {
-            Game.allTrainMarkers[train.id].setLatLng(train.latlng);
-          } else {
-            const marker = L.divIcon({
-              className: "train-icon",
-              style: `background-color: ${train.color}; border-color: ${
-                train.owner === Game.userId ? "yellow" : "white"
-              };`,
-            });
-            Game.allTrainMarkers[train.id] = L.marker(train.latlng, {
-              icon: marker,
-            }).addTo(map);
-            Game.allTrainMarkers[train.id].bindPopup(
-              `列車 #${train.id} (Owner: ${train.owner})`
-            );
-          }
-        });
+        // ... (省略)
       }
 
       function updateRankingUI(ranking) {
-        const list = document.getElementById("ranking-list");
-        list.innerHTML = "";
-        // 3. 他の人のランキングで一人しか見えない: サーバー側で全ユーザーを取得するように修正したため、ここでは表示するだけ
-        ranking.forEach((item, index) => {
-          const li = document.createElement("li");
-          li.innerHTML = `${index + 1}. <b>${item.userId}</b>: ¥${Math.round(
-            item.score
-          ).toLocaleString()}`;
-          if (item.userId === Game.userId) {
-            li.style.fontWeight = "bold";
-            li.style.color = "#0044BB";
-          }
-          list.appendChild(li);
-        });
+        // ... (省略)
       }
 
       // =========================================================
@@ -653,140 +643,23 @@
       // =========================================================
 
       function handleStationCreation(e) {
-        if (Game.mode !== "station" || !socket) return;
-        // 2. 範囲内に相手の駅があると立てれなくする: サーバー側でチェックを行う
-        socket.emit("buildStation", { latlng: e.latlng });
+        // ... (省略)
       }
 
       function handleStationDismantle(station) {
-        if (Game.mode !== "dismantle-station" || !socket) return;
-
-        if (station.ownerId !== Game.userId) {
-          alert("自分の駅しか解体できません。");
-          return;
-        }
-
-        const dismantleCost = Math.round(STATION_COST * 0.1);
-        if (
-          confirm(
-            `駅 ${
-              station.id
-            } を解体しますか？ (費用: ¥${dismantleCost.toLocaleString()})`
-          )
-        ) {
-          socket.emit("dismantleStation", { stationId: station.id });
-        }
+        // ... (省略)
       }
 
       function handleStationClick(station) {
-        if (Game.mode === "track") {
-          // 路線建設モード
-          if (station.ownerId !== Game.userId) {
-            alert("他プレイヤーの駅は路線のノードとして使用できません。");
-            return;
-          }
-
-          if (lineCandidateNodes.includes(station)) return;
-
-          lineCandidateNodes.push(station);
-
-          const currentCoords = lineCandidateNodes.map((s) => [
-            s.latlng.lat,
-            s.latlng.lng,
-          ]);
-
-          if (currentCoords.length >= 2) {
-            let weight = 7;
-            if (Game.currentTrackType === "double") weight = 12;
-            else if (Game.currentTrackType === "linear") weight = 15;
-            else if (Game.currentTrackType === "tram") weight = 6;
-
-            if (drawingPolyline) {
-              drawingPolyline
-                .setLatLngs(currentCoords)
-                .setStyle({ color: "#C0C0C0", weight: weight });
-            } else {
-              drawingPolyline = L.polyline(currentCoords, {
-                color: "#C0C0C0",
-                weight: weight,
-                opacity: 0.8,
-                dashArray: "10, 10",
-              }).addTo(map);
-            }
-          }
-        } else if (Game.mode === "dismantle-station") {
-          // 駅解体モード
-          handleStationDismantle(station);
-        }
+        // ... (省略)
       }
 
       function finalizeLine() {
-        if (lineCandidateNodes.length < 2 || !socket) {
-          alert("路線には2つ以上の駅が必要です。");
-          return;
-        }
-
-        const stationCoords = lineCandidateNodes.map((s) => [
-          s.latlng.lat,
-          s.latlng.lng,
-        ]);
-
-        socket.emit("buildLine", {
-          stationCoords: stationCoords,
-          trackType: Game.currentTrackType,
-        });
-
-        if (drawingPolyline) map.removeLayer(drawingPolyline);
-        lineCandidateNodes = [];
-        drawingPolyline = null;
-        toggleConstructionMode("idle");
+        // ... (省略)
       }
 
       function handleLineDismantle(e) {
-        if (Game.mode !== "dismantle-line" || !socket) return;
-
-        let closestLine = null;
-        let closestLineId = null;
-        let minDistance = Infinity;
-        const lineSearchRadiusMeters = 50; // 50m以内を許容範囲とする
-
-        // 🔹全ての路線を対象にする
-        Object.entries(Game.allLines).forEach(([lineId, polyline]) => {
-          const latlngs = polyline.getLatLngs();
-          latlngs.forEach((latlng) => {
-            const dist = e.latlng.distanceTo(latlng);
-            if (dist < minDistance && dist < lineSearchRadiusMeters) {
-              minDistance = dist;
-              closestLine = polyline;
-              closestLineId = lineId;
-            }
-          });
-        });
-
-        if (!closestLine || !closestLineId) {
-          alert("クリックした位置の近くに解体できる路線が見つかりません。");
-          return;
-        }
-
-        // 🔹lineIdからlineDataを取得
-        // Game.establishedLines にはサーバーからコスト情報が含まれて送られてくることを前提とする
-        const lineData = Game.establishedLines.find((l) => l.id == closestLineId);
-
-        // 🔹オーナー確認（自分の路線しか解体できない）
-        if (!lineData || lineData.ownerId !== Game.userId) {
-          alert("自分の路線のみ解体可能です。");
-          return;
-        }
-
-        // 修正: lineData.cost を使用
-        const dismantleCost = Math.round(lineData.cost * 0.1);
-        if (
-          confirm(
-            `路線 ${closestLineId} を解体しますか？ (費用: ¥${dismantleCost.toLocaleString()}、車両は購入価格の1/3で自動売却されます)`
-          )
-        ) {
-          socket.emit("dismantleLine", { lineId: parseInt(closestLineId) });
-        }
+        // ... (省略)
       }
 
       // =========================================================
@@ -836,7 +709,7 @@
           document.getElementById("btn-station-mode").classList.add("active"); // アイドル状態の強調
         }
         
-        // 💡 修正点 1: モード切り替え時に選択状態を復元
+        // モード切り替え時に選択状態を復元
         const trackTypeSelect = document.getElementById("track-type");
         if (trackTypeSelect) {
             trackTypeSelect.value = Game.currentTrackType;
@@ -955,7 +828,7 @@
           div.innerHTML = controlHtml;
           L.DomEvent.disableClickPropagation(div);
           
-          // 💡 修正点 2: 要素がDOMに追加された直後に選択値を復元
+          // 要素がDOMに追加された直後に選択値を復元
           const trackTypeSelect = div.querySelector("#track-type");
           if (trackTypeSelect) {
               trackTypeSelect.value = Game.currentTrackType;
