@@ -356,7 +356,8 @@
             data.vehicles !== undefined ? data.vehicles : this.vehicles;
 
           if (data.stations) this.drawStations(data.stations);
-          if (data.establishedLines) this.drawLines(data.establishedLines);
+          // 自分の路線リストは更新するが、描画はallLinesに任せるため、以下の行は削除
+          // if (data.establishedLines) this.drawLines(data.establishedLines);
 
           const totalAsset =
             this.money +
@@ -411,6 +412,7 @@
         drawLines(lines) {
           Object.values(this.allLines).forEach((l) => map.removeLayer(l));
           this.allLines = {};
+          // lines は全ユーザーの路線データ
           lines.forEach((line) => this.drawLine(line));
         },
 
@@ -420,10 +422,12 @@
           else if (line.trackType === "linear") weight = 15;
           else if (line.trackType === "tram") weight = 6;
 
+          // 自分の路線は太く、他人の路線は細くするなどの調整も可能
+          const isMyLine = line.ownerId === Game.userId;
           const finalStyle = {
             color: line.color,
-            weight: weight,
-            opacity: 1,
+            weight: isMyLine ? weight : weight * 0.7, // 他人の路線は少し細く
+            opacity: isMyLine ? 1 : 0.7, // 他人の路線は少し薄く
             lineCap: "round",
           };
           this.allLines[line.id] = L.polyline(line.coords, finalStyle)
@@ -442,6 +446,7 @@
           this.ownerId = ownerId;
           this.name = `駅 ${id}`;
 
+          // 自分の駅は青、他人の駅は赤
           const stationColor = ownerId === Game.userId ? "#0044BB" : "#FF0000";
 
           this.marker = L.marker(latlng, {
@@ -521,6 +526,12 @@
         socket.on("initialState", (data) => {
           VehicleData = data.vehicleData;
           Game.updateStats(data);
+          
+          // 1. 他の人の路線も見れるようにする: 全路線を描画
+          if (data.allLines) {
+            Game.drawLines(data.allLines);
+          }
+          
           updateVehicleBuyUI();
         });
 
@@ -544,9 +555,7 @@
 
         socket.on("lineBuilt", (data) => {
           Game.drawLine(data);
-          if (data.ownerId === Game.userId) {
-            Game.establishedLines.push(data);
-          }
+          // 自分の路線リストの更新はupdateUserStateに任せる
         });
 
         socket.on("lineDismantled", (data) => {
@@ -554,11 +563,7 @@
             map.removeLayer(Game.allLines[data.lineId]);
             delete Game.allLines[data.lineId];
           }
-          if (data.ownerId === Game.userId) {
-            Game.establishedLines = Game.establishedLines.filter(
-              (l) => l.id !== data.lineId
-            );
-          }
+          // 自分の路線リストの更新はupdateUserStateに任せる
         });
 
         socket.on("stationDismantled", (data) => {
@@ -614,6 +619,7 @@
       function updateRankingUI(ranking) {
         const list = document.getElementById("ranking-list");
         list.innerHTML = "";
+        // 3. 他の人のランキングで一人しか見えない: サーバー側で全ユーザーを取得するように修正したため、ここでは表示するだけ
         ranking.forEach((item, index) => {
           const li = document.createElement("li");
           li.innerHTML = `${index + 1}. <b>${item.userId}</b>: ¥${Math.round(
@@ -633,6 +639,7 @@
 
       function handleStationCreation(e) {
         if (Game.mode !== "station" || !socket) return;
+        // 2. 範囲内に相手の駅があると立てれなくする: サーバー側でチェックを行う
         socket.emit("buildStation", { latlng: e.latlng });
       }
 
@@ -720,50 +727,50 @@
         toggleConstructionMode("idle");
       }
 
-function handleLineDismantle(e) {
-  if (Game.mode !== "dismantle-line" || !socket) return;
+      function handleLineDismantle(e) {
+        if (Game.mode !== "dismantle-line" || !socket) return;
 
-  let closestLine = null;
-  let closestLineId = null;
-  let minDistance = Infinity;
-  const lineSearchRadiusMeters = 50; // 50m以内を許容範囲とする
+        let closestLine = null;
+        let closestLineId = null;
+        let minDistance = Infinity;
+        const lineSearchRadiusMeters = 50; // 50m以内を許容範囲とする
 
-  // 🔹全ての路線を対象にする
-  Object.entries(Game.allLines).forEach(([lineId, polyline]) => {
-    const latlngs = polyline.getLatLngs();
-    latlngs.forEach((latlng) => {
-      const dist = e.latlng.distanceTo(latlng);
-      if (dist < minDistance && dist < lineSearchRadiusMeters) {
-        minDistance = dist;
-        closestLine = polyline;
-        closestLineId = lineId;
+        // 🔹全ての路線を対象にする
+        Object.entries(Game.allLines).forEach(([lineId, polyline]) => {
+          const latlngs = polyline.getLatLngs();
+          latlngs.forEach((latlng) => {
+            const dist = e.latlng.distanceTo(latlng);
+            if (dist < minDistance && dist < lineSearchRadiusMeters) {
+              minDistance = dist;
+              closestLine = polyline;
+              closestLineId = lineId;
+            }
+          });
+        });
+
+        if (!closestLine || !closestLineId) {
+          alert("クリックした位置の近くに解体できる路線が見つかりません。");
+          return;
+        }
+
+        // 🔹lineIdからlineDataを取得
+        const lineData = Game.establishedLines.find((l) => l.id == closestLineId);
+
+        // 🔹オーナー確認（自分の路線しか解体できない）
+        if (!lineData || lineData.ownerId !== Game.userId) {
+          alert("自分の路線のみ解体可能です。");
+          return;
+        }
+
+        const dismantleCost = Math.round(lineData.cost * 0.1);
+        if (
+          confirm(
+            `路線 ${closestLineId} を解体しますか？ (費用: ¥${dismantleCost.toLocaleString()}、車両は購入価格の1/3で自動売却されます)`
+          )
+        ) {
+          socket.emit("dismantleLine", { lineId: parseInt(closestLineId) });
+        }
       }
-    });
-  });
-
-  if (!closestLine || !closestLineId) {
-    alert("クリックした位置の近くに解体できる路線が見つかりません。");
-    return;
-  }
-
-  // 🔹lineIdからlineDataを取得
-  const lineData = Game.establishedLines.find((l) => l.id == closestLineId);
-
-  // 🔹オーナー確認（自分の路線しか解体できない）
-  if (!lineData || lineData.ownerId !== Game.userId) {
-    alert("自分の路線のみ解体可能です。");
-    return;
-  }
-
-  const dismantleCost = Math.round(lineData.cost * 0.1);
-  if (
-    confirm(
-      `路線 ${closestLineId} を解体しますか？ (費用: ¥${dismantleCost.toLocaleString()}、車両は購入価格の1/3で自動売却されます)`
-    )
-  ) {
-    socket.emit("dismantleLine", { lineId: parseInt(closestLineId) });
-  }
-}
 
       // =========================================================
       // E. UIとイベント処理
