@@ -341,7 +341,7 @@ const ServerGame = {
     users: {}, 
     globalStats: {
         gameTime: new Date(2025, 0, 1, 0, 0, 0),
-        timeScale: 3600, 
+        timeScale: 60, 
         stations: [], 
         allLines: [], 
         lastMonthlyMaintenance: 0,
