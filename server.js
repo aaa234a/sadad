@@ -5,28 +5,24 @@ const socketio = require('socket.io');
 const cookieParser = require('cookie-parser');
 const path = require('path');
 const turf = require('@turf/turf'); 
-const mongoose = require('mongoose'); // Mongooseを追加
-require('dotenv').config(); // 環境変数をロード
+const mongoose = require('mongoose');
+require('dotenv').config();
 
 const app = express();
-// RenderなどのPaaS環境では環境変数からポートを取得するのが一般的
 const PORT = process.env.PORT || 3000; 
 const server = http.createServer(app);
 const io = socketio(server);
 
 // =================================================================
-// 0. データベース接続とMongooseスキーマ定義 (MongoDB Atlas)
+// 0. データベース接続とMongooseスキーマ定義
 // =================================================================
 
-// MongoDBの接続URLを環境変数から取得
-// Render環境ではMONGO_URIを設定してください。
 const MONGO_URI = process.env.MONGO_URI || "mongodb://localhost:27017/rail_tycoon";
 if (!MONGO_URI) {
     console.error("FATAL ERROR: MONGO_URI environment variable is not set.");
     process.exit(1);
 }
 
-// データベース接続関数
 async function connectDB() {
     try {
         await mongoose.connect(MONGO_URI);
@@ -37,9 +33,8 @@ async function connectDB() {
     }
 }
 
-// --- Mongoose Schemas (構造の定義) ---
+// --- Mongoose Schemas ---
 
-// グローバル統計 (単一ドキュメント)
 const GlobalStatsSchema = new mongoose.Schema({
     _id: { type: Number, default: 1 },
     gameTime: { type: Date, default: Date.now },
@@ -50,7 +45,6 @@ const GlobalStatsSchema = new mongoose.Schema({
 }, { collection: 'global_stats' });
 const GlobalStatsModel = mongoose.model('GlobalStats', GlobalStatsSchema);
 
-// ユーザー (財務情報)
 const UserSchema = new mongoose.Schema({
     userId: { type: String, required: true, unique: true },
     password: { type: String, required: true },
@@ -59,7 +53,6 @@ const UserSchema = new mongoose.Schema({
 }, { collection: 'users' });
 const UserModel = mongoose.model('User', UserSchema);
 
-// 駅
 const StationSchema = new mongoose.Schema({
     id: { type: Number, required: true, unique: true },
     ownerId: { type: String, required: true },
@@ -74,7 +67,6 @@ const StationSchema = new mongoose.Schema({
 }, { collection: 'stations' });
 const StationModel = mongoose.model('Station', StationSchema);
 
-// 路線 (lines)
 const LineSchema = new mongoose.Schema({
     id: { type: Number, required: true, unique: true },
     ownerId: { type: String, required: true },
@@ -86,7 +78,6 @@ const LineSchema = new mongoose.Schema({
 }, { collection: 'lines' });
 const LineModel = mongoose.model('Line', LineSchema);
 
-// 車両 (vehicles)
 const VehicleSchema = new mongoose.Schema({
     id: { type: Number, required: true, unique: true },
     lineId: Number,
@@ -94,14 +85,12 @@ const VehicleSchema = new mongoose.Schema({
     dataKey: String,
     positionKm: Number,
     status: String,
-    isReversed: Boolean, // MongooseではBooleanで保存
+    isReversed: Boolean,
     stopTimer: Number,
     currentLat: Number,
     currentLng: Number,
 }, { collection: 'vehicles' });
 const VehicleModel = mongoose.model('Vehicle', VehicleSchema);
-
-// --- 旧 dbQuery 関連のコードは削除 ---
 
 // =================================================================
 // A. サーバーサイド・ゲーム定数とユーティリティ
@@ -177,6 +166,9 @@ class ServerStation {
             this.lineConnections.push(lineId);
         }
     }
+    // 緯度経度を返すヘルパー
+    get lat() { return this.latlng[0]; }
+    get lng() { return this.latlng[1]; }
 }
 class ServerVehicle {
     constructor(id, line, data) {
@@ -248,8 +240,12 @@ class ServerVehicle {
     checkStationArrival() {
         const arrivalTolerance = 0.05; 
         this.stations.forEach((station, index) => {
-            const stationKm = this.totalRouteKm[index]; 
-            if (Math.abs(this.positionKm - stationKm) < arrivalTolerance && this.status === 'Running') {
+            // 路線が往復する場合、駅は2回登場する可能性があるため、全座標をチェック
+            const stationKm = this.totalRouteKm.find((km, i) => 
+                this.coords[i][0] === station.latlng[0] && this.coords[i][1] === station.latlng[1]
+            );
+            
+            if (stationKm !== undefined && Math.abs(this.positionKm - stationKm) < arrivalTolerance && this.status === 'Running') {
                 this.handleStationArrival(station);
             }
         });
@@ -274,7 +270,6 @@ class ServerVehicle {
         
         revenue *= (1 + Math.min(1.0, totalConnections * 0.1)); 
         if (ServerGame.users[this.ownerId]) {
-            // シミュレーション中の資金更新はメモリ内で行う
             ServerGame.users[this.ownerId].money += Math.round(revenue);
         }
     }
@@ -311,13 +306,12 @@ class ServerLineManager {
         user.money -= purchaseCost;
         
         const vehicleId = ServerGame.globalStats.nextVehicleId++;
-        await saveGlobalStats(); // IDカウンターの永続化
+        await saveGlobalStats();
         
         const newVehicle = new ServerVehicle(vehicleId, this, data); 
         this.vehicles.push(newVehicle);
         user.vehicles.push(newVehicle);
         
-        // 車両をDBに保存 (Mongoose)
         const dataKey = Object.keys(VehicleData).find(key => VehicleData[key] === newVehicle.data);
         await VehicleModel.create({
             id: newVehicle.id,
@@ -332,7 +326,6 @@ class ServerLineManager {
             currentLng: newVehicle.currentLng
         });
         
-        // ユーザーの資金をDBに保存 (Mongoose)
         await saveUserFinancials(user.userId, user.money, user.totalConstructionCost);
         
         return { success: true, vehicle: newVehicle };
@@ -350,6 +343,7 @@ const ServerGame = {
         gameTime: new Date(2025, 0, 1, 0, 0, 0),
         timeScale: 3600, 
         stations: [], 
+        allLines: [], // 1. 全路線の情報を保持
         lastMonthlyMaintenance: 0,
         nextStationId: 1,
         nextLineId: 1,
@@ -383,8 +377,7 @@ async function saveUserFinancials(userId, money, totalConstructionCost) {
 }
 
 async function loadUserData(userId) {
-    // ユーザー情報のロード
-    const userRow = await UserModel.findOne({ userId: userId }).lean(); // .lean()でプレーンなJSオブジェクトを取得
+    const userRow = await UserModel.findOne({ userId: userId }).lean();
     if (!userRow) return null;
 
     const user = {
@@ -396,7 +389,6 @@ async function loadUserData(userId) {
         vehicles: [],
     };
 
-    // 路線のロード
     const linesRes = await LineModel.find({ ownerId: userId }).lean();
     const lineManagers = linesRes.map(row => {
         const coords = row.coords; 
@@ -412,7 +404,6 @@ async function loadUserData(userId) {
     });
     user.establishedLines = lineManagers;
 
-    // 車両のロード
     const vehiclesRes = await VehicleModel.find({ ownerId: userId }).lean();
     vehiclesRes.forEach(row => {
         const line = user.establishedLines.find(l => l.id === row.lineId);
@@ -420,7 +411,6 @@ async function loadUserData(userId) {
             const data = VehicleData[row.dataKey];
             const vehicle = new ServerVehicle(row.id, line, data);
             
-            // DBからシミュレーション状態を復元 (isReversedはBoolean)
             vehicle.positionKm = row.positionKm;
             vehicle.status = row.status;
             vehicle.isReversed = row.isReversed;
@@ -440,8 +430,6 @@ async function loadUserData(userId) {
 async function calculateMonthlyMaintenance() {
     let totalCost = 0;
     
-    // Object.values(ServerGame.users)をループ中に非同期処理 (saveUserFinancials) を行うため、
-    // Promise.allを避けて for...of を使用
     for (const user of Object.values(ServerGame.users)) {
         let monthlyMaintenance = 0;
         
@@ -457,21 +445,38 @@ async function calculateMonthlyMaintenance() {
         user.money -= userCost;
         totalCost += userCost;
         
-        // ユーザーの資金をDBに保存
         await saveUserFinancials(user.userId, user.money, user.totalConstructionCost);
     }
     ServerGame.globalStats.lastMonthlyMaintenance = totalCost;
 }
-function calculateRanking() {
-    const ranking = Object.values(ServerGame.users)
-        .map(user => ({
+
+// 3. ランキング計算をDBの全ユーザーを対象に修正
+async function calculateRanking() {
+    const allUsers = await UserModel.find({}).lean();
+    
+    const rankingPromises = allUsers.map(async (user) => {
+        // ユーザーの建設コストはDBのtotalConstructionCostを使用
+        const totalConstructionCost = user.totalConstructionCost;
+        // 車両数はDBから取得
+        const vehicleCount = await VehicleModel.countDocuments({ ownerId: user.userId });
+        
+        // 総資産の計算 (車両の価値は購入価格の概算: VEHICLE_BASE_COST * 1.5 (平均倍率) * vehicleCount)
+        // ここでは簡単のため、1台あたり10Mとして計算
+        const score = user.money + totalConstructionCost * 0.7 + vehicleCount * 10000000;
+        
+        return {
             userId: user.userId,
-            score: user.money + user.totalConstructionCost * 0.7 + user.vehicles.length * 10000000, 
-        }))
+            score: score,
+        };
+    });
+    
+    const ranking = await Promise.all(rankingPromises);
+    
+    return ranking
         .sort((a, b) => b.score - a.score)
         .slice(0, 10);
-    return ranking;
 }
+
 async function dismantleLine(userId, lineId) {
     const user = ServerGame.users[userId];
     if (!user) return { success: false, message: "ユーザーが見つかりません。" };
@@ -479,11 +484,10 @@ async function dismantleLine(userId, lineId) {
     if (lineIndex === -1) return { success: false, message: "路線が見つかりません。" };
     const lineToDismantle = user.establishedLines[lineIndex];
     
-    // 1. 解体費用 (建設費用の10%)
     const dismantleCost = Math.round(lineToDismantle.cost * 0.1);
     if (user.money < dismantleCost) return { success: false, message: "解体費用が不足しています。" };
     user.money -= dismantleCost;
-    // 2. 路線上の車両を売却 (購入価格の1/3)
+    
     let totalVehicleSaleRevenue = 0;
     
     const vehiclesOnLine = user.vehicles.filter(v => v.lineId === lineId);
@@ -495,20 +499,20 @@ async function dismantleLine(userId, lineId) {
         totalVehicleSaleRevenue += saleRevenue;
     });
     user.vehicles = user.vehicles.filter(v => v.lineId !== lineId);
-    await VehicleModel.deleteMany({ lineId: lineId }); // DBから車両を削除 (Mongoose)
+    await VehicleModel.deleteMany({ lineId: lineId });
     
-    // 3. 路線を削除
     user.establishedLines.splice(lineIndex, 1);
     user.totalConstructionCost -= lineToDismantle.cost;
-    await LineModel.deleteOne({ id: lineId }); // DBから路線を削除 (Mongoose)
+    await LineModel.deleteOne({ id: lineId });
     
-    // 4. 駅の接続情報からこの路線IDを削除 (メモリとDBの両方を更新)
+    // 1. ServerGame.globalStats.allLines からも削除
+    ServerGame.globalStats.allLines = ServerGame.globalStats.allLines.filter(l => l.id !== lineId);
+    
     const updatePromises = [];
     for (const station of lineToDismantle.stations) {
         const globalStation = ServerGame.globalStats.stations.find(s => s.id === station.id);
         if (globalStation) {
             globalStation.lineConnections = globalStation.lineConnections.filter(id => id !== lineId);
-            // DBの更新 (Mongoose)
             updatePromises.push(StationModel.updateOne(
                 { id: globalStation.id },
                 { $set: { lineConnections: globalStation.lineConnections } }
@@ -517,7 +521,6 @@ async function dismantleLine(userId, lineId) {
     }
     await Promise.all(updatePromises);
     
-    // ユーザーの資金とコストをDBに保存
     await saveUserFinancials(user.userId, user.money, user.totalConstructionCost);
     return { 
         success: true, 
@@ -532,20 +535,18 @@ async function dismantleStation(userId, stationId) {
     const globalStationIndex = ServerGame.globalStats.stations.findIndex(s => s.id === stationId && s.ownerId === userId);
     if (globalStationIndex === -1) return { success: false, message: "あなたの駅が見つかりません。" };
     const stationToDismantle = ServerGame.globalStats.stations[globalStationIndex];
-    // 1. 接続路線のチェック
+    
     if (stationToDismantle.lineConnections.length > 0) {
         return { success: false, message: "この駅には路線が接続されています。先に路線をすべて解体してください。" };
     }
     
-    // 2. 解体費用 (建設費用の10%)
     const dismantleCost = Math.round(STATION_COST * 0.1);
     if (user.money < dismantleCost) return { success: false, message: "解体費用が不足しています。" };
     user.money -= dismantleCost;
-    // 3. 駅を削除 (メモリとDBの両方から)
-    ServerGame.globalStats.stations.splice(globalStationIndex, 1);
-    await StationModel.deleteOne({ id: stationId }); // DBから駅を削除 (Mongoose)
     
-    // ユーザーの資金をDBに保存
+    ServerGame.globalStats.stations.splice(globalStationIndex, 1);
+    await StationModel.deleteOne({ id: stationId });
+    
     await saveUserFinancials(user.userId, user.money, user.totalConstructionCost);
     return { 
         success: true, 
@@ -596,7 +597,8 @@ async function serverSimulationLoop() {
         }
     });
     
-    io.emit('rankingUpdate', calculateRanking()); 
+    // 3. ランキング計算を await で実行
+    io.emit('rankingUpdate', await calculateRanking()); 
 }
 // =================================================================
 // D. ExpressとSocket.IOのセットアップ
@@ -613,13 +615,10 @@ app.post('/login', express.json(), async (req, res) => {
         const userRow = await UserModel.findOne({ userId: username }).lean();
         
         if (userRow) {
-            // 既存ユーザーのログイン
             if (userRow.password !== password) {
                 return res.status(401).send({ message: "パスワードが違います。" });
             }
         } else {
-            // 新規ユーザー登録
-            // 初期資金: 5000000000
             await UserModel.create({
                 userId: username,
                 password: password,
@@ -657,12 +656,17 @@ io.on('connection', (socket) => {
         const clientLines = userState.establishedLines.map(line => ({ 
             id: line.id, ownerId: line.ownerId, 
             coords: line.coords, color: line.color, 
-            trackType: line.trackType 
+            trackType: line.trackType, cost: line.cost 
         }));
+        
+        // 1. 全路線の情報をクライアントに送信
+        const allClientLines = ServerGame.globalStats.allLines;
+
         socket.emit('initialState', {
             money: userState.money,
             totalConstructionCost: userState.totalConstructionCost,
-            establishedLines: clientLines,
+            establishedLines: clientLines, // 自分の路線マネージャに必要な情報
+            allLines: allClientLines, // 全路線の描画に必要な情報
             vehicles: userState.vehicles.map(v => ({ id: v.id, data: v.data })), 
             stations: ServerGame.globalStats.stations.map(s => ({ id: s.id, latlng: s.latlng, ownerId: s.ownerId })), 
             vehicleData: ServerGame.VehicleData,
@@ -671,20 +675,37 @@ io.on('connection', (socket) => {
     socket.on('buildStation', async (data) => {
         if (!userId) return;
         const user = ServerGame.users[userId];
+        const latlng = [data.latlng.lat, data.latlng.lng];
+        
         if (user.money < STATION_COST) {
             socket.emit('error', '資金不足で駅を建設できません。');
             return;
         }
         
+        // 2. 排他制御ロジックの追加
         try {
+            const newStationPoint = turf.point([latlng[1], latlng[0]]); // turfは[lng, lat]
+            const exclusionRadiusKm = 0.5; // 500メートル
+            
+            for (const existingStation of ServerGame.globalStats.stations) {
+                // 自分の駅は無視
+                if (existingStation.ownerId === userId) continue;
+                
+                const existingStationPoint = turf.point([existingStation.lng, existingStation.lat]);
+                const distanceKm = turf.distance(newStationPoint, existingStationPoint, { units: 'kilometers' });
+                
+                if (distanceKm < exclusionRadiusKm) {
+                    socket.emit('error', `他のプレイヤー (${existingStation.ownerId}) の駅が ${Math.round(distanceKm * 1000)}m 以内にあります。建設できません。`);
+                    return;
+                }
+            }
+
             // IDの採番と永続化
             const stationId = ServerGame.globalStats.nextStationId++;
             await saveGlobalStats();
             
-            const latlng = [data.latlng.lat, data.latlng.lng];
             const newStation = new ServerStation(stationId, latlng, userId);
             
-            // DBに駅を保存 (Mongoose)
             await StationModel.create({
                 id: newStation.id,
                 ownerId: newStation.ownerId,
@@ -741,7 +762,6 @@ io.on('connection', (socket) => {
             );
             user.establishedLines.push(newLineManager);
             
-            // DBに路線を保存 (Mongoose)
             await LineModel.create({
                 id: lineId,
                 ownerId: userId,
@@ -752,7 +772,11 @@ io.on('connection', (socket) => {
                 trackType: data.trackType
             });
             
-            // 駅の接続情報を更新し、DBに保存
+            // 1. 全路線リストを更新
+            ServerGame.globalStats.allLines.push({
+                id: lineId, ownerId: userId, coords: data.stationCoords, color: lineColor, trackType: data.trackType, cost: totalCost, lengthKm: totalLengthKm
+            });
+            
             const updatePromises = [];
             for (const station of lineStations) {
                 station.addLine(lineId);
@@ -767,7 +791,15 @@ io.on('connection', (socket) => {
                 ownerId: userId, id: lineId, coords: data.stationCoords, color: lineColor, 
                 trackType: data.trackType, cost: totalCost, lengthKm: totalLengthKm
             });
-            socket.emit('updateUserState', { money: user.money, totalConstructionCost: user.totalConstructionCost });
+            socket.emit('updateUserState', { 
+                money: user.money, 
+                totalConstructionCost: user.totalConstructionCost,
+                establishedLines: user.establishedLines.map(line => ({ 
+                    id: line.id, ownerId: line.ownerId, 
+                    coords: line.coords, color: line.color, 
+                    trackType: line.trackType, cost: line.cost 
+                }))
+            });
         } catch (error) {
             console.error("buildLine error:", error);
             socket.emit('error', '路線の建設中にエラーが発生しました。');
@@ -804,7 +836,7 @@ io.on('connection', (socket) => {
             socket.emit('updateUserState', {
                 money: user.money,
                 totalConstructionCost: user.totalConstructionCost,
-                establishedLines: user.establishedLines.map(l => ({ id: l.id, ownerId: l.ownerId, coords: l.coords, color: l.color, trackType: l.trackType })),
+                establishedLines: user.establishedLines.map(l => ({ id: l.id, ownerId: l.ownerId, coords: l.coords, color: l.color, trackType: l.trackType, cost: l.cost })),
                 vehicles: user.vehicles.map(v => ({ id: v.id, data: v.data })),
             });
             socket.emit('info', result.message);
@@ -838,7 +870,6 @@ io.on('connection', (socket) => {
 // E. サーバー起動ロジック
 // =================================================================
 async function initializeDatabase() {
-    // GlobalStatsの初期値設定
     const count = await GlobalStatsModel.countDocuments({});
     if (count === 0) {
         await GlobalStatsModel.create({
@@ -865,18 +896,31 @@ async function loadGlobalStats() {
     ServerGame.globalStats.stations = stationsRes.map(row => {
         const station = new ServerStation(row.id, [row.lat, row.lng], row.ownerId);
         station.name = row.name;
-        station.demand = row.demand; // Mongooseが自動でオブジェクトに変換
+        station.demand = row.demand;
         station.lineConnections = row.lineConnections;
         return station;
+    });
+    
+    // 1. 全路線のロード
+    const allLinesRes = await LineModel.find({}).lean();
+    ServerGame.globalStats.allLines = allLinesRes.map(row => {
+        return {
+            id: row.id,
+            ownerId: row.ownerId,
+            coords: row.coords,
+            color: row.color,
+            trackType: row.trackType,
+            cost: row.cost,
+            lengthKm: row.lengthKm,
+        };
     });
 }
 async function startServer() {
     try {
-        await connectDB(); // MongoDB接続
+        await connectDB();
         await initializeDatabase();
         await loadGlobalStats();
         
-        // シミュレーションループの開始
         setInterval(serverSimulationLoop, 100); 
         server.listen(PORT, () => {
             console.log(`サーバーがポート ${PORT} で起動しました。`);
