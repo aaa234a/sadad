@@ -20,7 +20,7 @@ const io = socketio(server);
 
 // MongoDBの接続URLを環境変数から取得
 // Render環境ではMONGO_URIを設定してください。
-const MONGO_URI = process.env.MONGO_URI || "mongodb+srv://ktyoshitu87_db_user:3137admin@cluster0.ag8sryr.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0";
+const MONGO_URI = process.env.MONGO_URI || "mongodb://localhost:27017/rail_tycoon";
 if (!MONGO_URI) {
     console.error("FATAL ERROR: MONGO_URI environment variable is not set.");
     process.exit(1);
@@ -348,7 +348,7 @@ const ServerGame = {
     users: {}, 
     globalStats: {
         gameTime: new Date(2025, 0, 1, 0, 0, 0),
-        timeScale: 60, 
+        timeScale: 3600, 
         stations: [], 
         lastMonthlyMaintenance: 0,
         nextStationId: 1,
@@ -659,33 +659,14 @@ io.on('connection', (socket) => {
             coords: line.coords, color: line.color, 
             trackType: line.trackType 
         }));
-// まず allLines を作成
-const allLines = Object.values(ServerGame.users)
-  .flatMap(user => user.establishedLines)
-  .map(line => ({
-    id: line.id,
-    ownerId: line.ownerId,
-    coords: line.coords,
-    color: line.color,
-    trackType: line.trackType
-  }));
-
-// 送信するデータ
-socket.emit('initialState', {
-  money: userState.money,
-  totalConstructionCost: userState.totalConstructionCost,
-  establishedLines: allLines, // ←全路線を渡す
-  vehicles: userState.vehicles, // ←ここをちゃんと書く
-  stations: ServerGame.globalStats.stations.map(s => ({
-    id: s.id,
-    name: s.name,
-    coords: s.coords,
-    ownerId: s.ownerId
-  })),
-  vehicleData: ServerGame.VehicleData
-});
-
-
+        socket.emit('initialState', {
+            money: userState.money,
+            totalConstructionCost: userState.totalConstructionCost,
+            establishedLines: clientLines,
+            vehicles: userState.vehicles.map(v => ({ id: v.id, data: v.data })), 
+            stations: ServerGame.globalStats.stations.map(s => ({ id: s.id, latlng: s.latlng, ownerId: s.ownerId })), 
+            vehicleData: ServerGame.VehicleData,
+        });
     });
     socket.on('buildStation', async (data) => {
         if (!userId) return;
