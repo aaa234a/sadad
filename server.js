@@ -38,7 +38,7 @@ async function connectDB() {
 const GlobalStatsSchema = new mongoose.Schema({
     _id: { type: Number, default: 1 },
     gameTime: { type: Date, default: Date.now },
-    timeScale: { type: Number, default: 3600 },
+    timeScale: { type: Number, default: 60 },
     nextStationId: { type: Number, default: 1 },
     nextLineId: { type: Number, default: 1 },
     nextVehicleId: { type: Number, default: 1 },
@@ -202,7 +202,7 @@ class ServerVehicle {
             return;
         }
         if (this.status !== 'Running') return;
-        const speedKms = this.data.maxSpeedKmH / 3600;
+        const speedKms = this.data.maxSpeedKmH / 60;
         const travelDistanceKm = speedKms * gameDeltaSeconds; 
         
         const direction = this.isReversed ? -1 : 1;
@@ -876,7 +876,7 @@ async function initializeDatabase() {
         await GlobalStatsModel.create({
             _id: 1,
             gameTime: new Date(2025, 0, 1, 0, 0, 0),
-            timeScale: 3600,
+            timeScale: 60,
             nextStationId: 1,
             nextLineId: 1,
             nextVehicleId: 1
