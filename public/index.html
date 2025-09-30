@@ -642,25 +642,143 @@
       // D. 建設・解体ロジック (サーバーにコマンド送信)
       // =========================================================
 
-      function handleStationCreation(e) {
-        // ... (省略)
+       function handleStationCreation(e) {
+        if (Game.mode !== "station" || !socket) return;
+        // 2. 範囲内に相手の駅があると立てれなくする: サーバー側でチェックを行う
+        socket.emit("buildStation", { latlng: e.latlng });
       }
 
       function handleStationDismantle(station) {
-        // ... (省略)
+        if (Game.mode !== "dismantle-station" || !socket) return;
+
+        if (station.ownerId !== Game.userId) {
+          alert("自分の駅しか解体できません。");
+          return;
+        }
+
+        const dismantleCost = Math.round(STATION_COST * 0.1);
+        if (
+          confirm(
+            `駅 ${
+              station.id
+            } を解体しますか？ (費用: ¥${dismantleCost.toLocaleString()})`
+          )
+        ) {
+          socket.emit("dismantleStation", { stationId: station.id });
+        }
       }
 
       function handleStationClick(station) {
-        // ... (省略)
+        if (Game.mode === "track") {
+          // 路線建設モード
+          if (station.ownerId !== Game.userId) {
+            alert("他プレイヤーの駅は路線のノードとして使用できません。");
+            return;
+          }
+
+          if (lineCandidateNodes.includes(station)) return;
+
+          lineCandidateNodes.push(station);
+
+          const currentCoords = lineCandidateNodes.map((s) => [
+            s.latlng.lat,
+            s.latlng.lng,
+          ]);
+
+          if (currentCoords.length >= 2) {
+            let weight = 7;
+            if (Game.currentTrackType === "double") weight = 12;
+            else if (Game.currentTrackType === "linear") weight = 15;
+            else if (Game.currentTrackType === "tram") weight = 6;
+
+            if (drawingPolyline) {
+              drawingPolyline
+                .setLatLngs(currentCoords)
+                .setStyle({ color: "#C0C0C0", weight: weight });
+            } else {
+              drawingPolyline = L.polyline(currentCoords, {
+                color: "#C0C0C0",
+                weight: weight,
+                opacity: 0.8,
+                dashArray: "10, 10",
+              }).addTo(map);
+            }
+          }
+        } else if (Game.mode === "dismantle-station") {
+          // 駅解体モード
+          handleStationDismantle(station);
+        }
       }
 
       function finalizeLine() {
-        // ... (省略)
+        if (lineCandidateNodes.length < 2 || !socket) {
+          alert("路線には2つ以上の駅が必要です。");
+          return;
+        }
+
+        const stationCoords = lineCandidateNodes.map((s) => [
+          s.latlng.lat,
+          s.latlng.lng,
+        ]);
+
+        socket.emit("buildLine", {
+          stationCoords: stationCoords,
+          trackType: Game.currentTrackType,
+        });
+
+        if (drawingPolyline) map.removeLayer(drawingPolyline);
+        lineCandidateNodes = [];
+        drawingPolyline = null;
+        toggleConstructionMode("idle");
       }
 
       function handleLineDismantle(e) {
-        // ... (省略)
+        if (Game.mode !== "dismantle-line" || !socket) return;
+
+        let closestLine = null;
+        let closestLineId = null;
+        let minDistance = Infinity;
+        const lineSearchRadiusMeters = 50; // 50m以内を許容範囲とする
+
+        // 🔹全ての路線を対象にする
+        Object.entries(Game.allLines).forEach(([lineId, polyline]) => {
+          const latlngs = polyline.getLatLngs();
+          latlngs.forEach((latlng) => {
+            const dist = e.latlng.distanceTo(latlng);
+            if (dist < minDistance && dist < lineSearchRadiusMeters) {
+              minDistance = dist;
+              closestLine = polyline;
+              closestLineId = lineId;
+            }
+          });
+        });
+
+        if (!closestLine || !closestLineId) {
+          alert("クリックした位置の近くに解体できる路線が見つかりません。");
+          return;
+        }
+
+        // 🔹lineIdからlineDataを取得
+        // Game.establishedLines にはサーバーからコスト情報が含まれて送られてくることを前提とする
+        const lineData = Game.establishedLines.find((l) => l.id == closestLineId);
+
+        // 🔹オーナー確認（自分の路線しか解体できない）
+        if (!lineData || lineData.ownerId !== Game.userId) {
+          alert("自分の路線のみ解体可能です。");
+          return;
+        }
+
+        // 修正: lineData.cost を使用
+        const dismantleCost = Math.round(lineData.cost * 0.1);
+        if (
+          confirm(
+            `路線 ${closestLineId} を解体しますか？ (費用: ¥${dismantleCost.toLocaleString()}、車両は購入価格の1/3で自動売却されます)`
+          )
+        ) {
+          socket.emit("dismantleLine", { lineId: parseInt(closestLineId) });
+        }
       }
+
 
       // =========================================================
       // E. UIとイベント処理
