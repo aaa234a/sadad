@@ -31,11 +31,11 @@
         box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3);
         font-family: Arial, sans-serif;
         z-index: 1000;
+        position: absolute;
       }
 
       /* ログインオーバーレイ */
       #login-overlay {
-        position: absolute;
         top: 0;
         left: 0;
         width: 100%;
@@ -55,13 +55,24 @@
 
       /* UIコントロールのスタイル修正: スクロール可能にする */
       .rail-ui-control {
+        top: 10px;
+        left: 10px;
         width: 300px;
-        max-height: 95vh;
-        overflow-y: auto;
+        max-height: 95vh; /* 画面の高さに合わせて最大高さを設定 */
+        overflow-y: auto; /* 縦方向のスクロールを有効にする */
       }
-      #game-stats, #ranking-panel {
+
+      /* UIコンソール位置 */
+      #game-stats {
+        top: 10px;
+        right: 10px;
         width: 300px;
         line-height: 1.5;
+      }
+      #ranking-panel {
+        bottom: 10px;
+        right: 10px;
+        width: 300px;
       }
 
       /* アコーディオンヘッダー */
@@ -110,21 +121,15 @@
         margin-bottom: 10px;
       }
 
-      /* 列車アイコンの調整 (L.divIconのラッパーとして機能) */
-      .train-icon-container {
-        /* L.divIconのデフォルトスタイルを上書き */
-        background: none !important; 
-        border: none !important;
-      }
+      /* 列車アイコンの調整 */
       .train-icon {
         width: 12px;
         height: 12px;
         border-radius: 50%;
         border: 2px solid #fff;
         box-shadow: 0 0 5px rgba(0, 0, 0, 0.8);
-        transform: translate(-50%, -50%); /* 中央配置 */
+        transform: translate(-50%, -50%);
       }
-      
       .station-icon {
         background-color: #000;
         width: 15px;
@@ -169,6 +174,7 @@
   <body>
     <div id="map"></div>
 
+    <!-- ログインオーバーレイ -->
     <div id="login-overlay">
       <div id="login-panel">
         <h2>オンライン鉄道シムへようこそ</h2>
@@ -195,6 +201,7 @@
       </div>
     </div>
 
+    <!-- ゲーム統計 (右上のUI) -->
     <div id="game-stats">
       <div class="accordion-header" onclick="toggleAccordion('stats-content')">
         <span>📊 ゲーム統計・時間 <span id="stats-toggle-icon">▼</span></span>
@@ -216,6 +223,7 @@
       </div>
     </div>
 
+    <!-- 建設・車両コントロール (左上のUI) -->
     <div class="rail-ui-control">
       <div
         class="accordion-header"
@@ -242,6 +250,7 @@
             style="margin: 10px 0; border: none; border-top: 1px solid #ccc"
           />
 
+          <!-- 解体モードのボタン -->
           <button
             id="btn-dismantle-station-mode"
             onclick="toggleConstructionMode('dismantle-station')"
@@ -283,6 +292,7 @@
       </div>
     </div>
 
+    <!-- ランキングパネル (右下のUI) -->
     <div id="ranking-panel">
       <div
         class="accordion-header"
@@ -300,6 +310,7 @@
       </div>
     </div>
 
+    <!-- エラーメッセージ表示領域 -->
     <div id="error-message" style="display: none"></div>
     <div id="info-message" style="display: none"></div>
 
@@ -384,11 +395,8 @@
         },
 
         drawStations(stations) {
-          // 既存のマーカーを削除
           this.stations.forEach((s) => map.removeLayer(s.marker));
           this.stations = [];
-          
-          // 新しいマーカーを描画
           stations.forEach(
             (s) =>
               new Station(
@@ -418,20 +426,10 @@
             opacity: 1,
             lineCap: "round",
           };
-          const polyline = L.polyline(line.coords, finalStyle).addTo(map);
-
-          // クリックイベントを直で設定
-          polyline.on("click", (e) => {
-            if (Game.mode === "dismantle-line") {
-              handleLineDismantle(e, line.id);
-              L.DomEvent.stopPropagation(e); // マップ側に伝播しない
-            }
-          });
-
-          this.allLines[line.id] = polyline;
-        }
+          this.allLines[line.id] = L.polyline(line.coords, finalStyle)
+            .addTo(map);
+        },
       };
-
 
       let socket;
       let drawingPolyline = null;
@@ -444,8 +442,7 @@
           this.ownerId = ownerId;
           this.name = `駅 ${id}`;
 
-          // ❗ 修正点: ownerId と Game.userId の型を一致させて比較
-          const stationColor = String(ownerId) === String(Game.userId) ? "#0044BB" : "#FF0000";
+          const stationColor = ownerId === Game.userId ? "#0044BB" : "#FF0000";
 
           this.marker = L.marker(latlng, {
             icon: L.divIcon({
@@ -515,16 +512,10 @@
       }
 
       function connectSocket(userId) {
-        // userIdをクエリパラメータとして渡すことで、サーバー側でセッション管理が可能になる
-        socket = io({
-          query: {
-            userId: userId
-          }
-        });
+        socket = io();
 
         socket.on("connect", () => {
-          // ログインが完了しているため、ここでは認証情報を再確認
-          socket.emit("clientReady", { userId: userId });
+          socket.emit("login", { userId: userId });
         });
 
         socket.on("initialState", (data) => {
@@ -599,31 +590,17 @@
         });
       }
 
-      function showInfo(message) {
-        const infoDiv = document.getElementById("info-message");
-        infoDiv.textContent = message;
-        infoDiv.style.display = "block";
-        setTimeout(() => {
-          infoDiv.style.display = "none";
-        }, 3000);
-      }
-      
       function updateTrainPositions(trainPositions) {
         trainPositions.forEach((train) => {
           if (Game.allTrainMarkers[train.id]) {
-            // 既存のマーカーの位置を更新
             Game.allTrainMarkers[train.id].setLatLng(train.latlng);
           } else {
-            // ❗ 修正点: 列車アイコンをL.divIconとして適切に描画する
             const marker = L.divIcon({
-              className: "train-icon-container", // CSSで定義されたコンテナクラス
-              iconSize: [16, 16], // アイコンのサイズを定義
-              // styleで動的に色を設定した子divをhtmlプロパティに設定
-              html: `<div class="train-icon" style="background-color: ${train.color}; border-color: ${
-                String(train.owner) === String(Game.userId) ? "yellow" : "white"
-              };"></div>`,
+              className: "train-icon",
+              style: `background-color: ${train.color}; border-color: ${
+                train.owner === Game.userId ? "yellow" : "white"
+              };`,
             });
-            
             Game.allTrainMarkers[train.id] = L.marker(train.latlng, {
               icon: marker,
             }).addTo(map);
@@ -632,8 +609,6 @@
             );
           }
         });
-
-        // サーバーから送られてこなくなった列車をマップから削除するロジックはサーバー実装に依存するため、ここでは省略
       }
 
       function updateRankingUI(ranking) {
@@ -664,8 +639,8 @@
       function handleStationDismantle(station) {
         if (Game.mode !== "dismantle-station" || !socket) return;
 
-        if (String(station.ownerId) !== String(Game.userId)) {
-          showInfo("自分の駅しか解体できません。");
+        if (station.ownerId !== Game.userId) {
+          alert("自分の駅しか解体できません。");
           return;
         }
 
@@ -684,8 +659,8 @@
       function handleStationClick(station) {
         if (Game.mode === "track") {
           // 路線建設モード
-          if (String(station.ownerId) !== String(Game.userId)) {
-            showInfo("他プレイヤーの駅は路線のノードとして使用できません。");
+          if (station.ownerId !== Game.userId) {
+            alert("他プレイヤーの駅は路線のノードとして使用できません。");
             return;
           }
 
@@ -725,7 +700,7 @@
 
       function finalizeLine() {
         if (lineCandidateNodes.length < 2 || !socket) {
-          showInfo("路線には2つ以上の駅が必要です。");
+          alert("路線には2つ以上の駅が必要です。");
           return;
         }
 
@@ -745,22 +720,50 @@
         toggleConstructionMode("idle");
       }
 
-      function handleLineDismantle(e, lineId) {
-        if (Game.mode !== "dismantle-line" || !socket) return;
-        
-        // establishedLinesは自分の路線のリスト
-        const line = Game.establishedLines.find(l => l.id === lineId);
+function handleLineDismantle(e) {
+  if (Game.mode !== "dismantle-line" || !socket) return;
 
-        if (!line) {
-          showInfo("自分の路線しか解体できません。");
-          return;
-        }
+  let closestLine = null;
+  let closestLineId = null;
+  let minDistance = Infinity;
+  const lineSearchRadiusMeters = 50; // 50m以内を許容範囲とする
 
-        const dismantleCost = Math.round((line.cost || 0) * 0.1); 
-        if (confirm(`路線 ${line.id} を解体しますか？ (費用: ¥${dismantleCost.toLocaleString()})`)) {
-          socket.emit("dismantleLine", { lineId: line.id });
-        }
+  // 🔹全ての路線を対象にする
+  Object.entries(Game.allLines).forEach(([lineId, polyline]) => {
+    const latlngs = polyline.getLatLngs();
+    latlngs.forEach((latlng) => {
+      const dist = e.latlng.distanceTo(latlng);
+      if (dist < minDistance && dist < lineSearchRadiusMeters) {
+        minDistance = dist;
+        closestLine = polyline;
+        closestLineId = lineId;
       }
+    });
+  });
+
+  if (!closestLine || !closestLineId) {
+    alert("クリックした位置の近くに解体できる路線が見つかりません。");
+    return;
+  }
+
+  // 🔹lineIdからlineDataを取得
+  const lineData = Game.establishedLines.find((l) => l.id == closestLineId);
+
+  // 🔹オーナー確認（自分の路線しか解体できない）
+  if (!lineData || lineData.ownerId !== Game.userId) {
+    alert("自分の路線のみ解体可能です。");
+    return;
+  }
+
+  const dismantleCost = Math.round(lineData.cost * 0.1);
+  if (
+    confirm(
+      `路線 ${closestLineId} を解体しますか？ (費用: ¥${dismantleCost.toLocaleString()}、車両は購入価格の1/3で自動売却されます)`
+    )
+  ) {
+    socket.emit("dismantleLine", { lineId: parseInt(closestLineId) });
+  }
+}
 
       // =========================================================
       // E. UIとイベント処理
@@ -775,6 +778,7 @@
         L.DomUtil.removeClass(mapContainer, "dismantle-line-mode");
 
         map.off("click", handleStationCreation);
+        map.off("click", handleLineDismantle);
 
         if (drawingPolyline) map.removeLayer(drawingPolyline);
         drawingPolyline = null;
@@ -782,7 +786,6 @@
 
         Game.mode = newMode;
 
-        // ボタンのハイライトをリセット
         document
           .querySelectorAll(".rail-ui-control button")
           .forEach((btn) => btn.classList.remove("active"));
@@ -804,6 +807,9 @@
           document
             .getElementById("btn-dismantle-line-mode")
             .classList.add("active");
+          map.on("click", handleLineDismantle);
+        } else {
+          document.getElementById("btn-station-mode").classList.add("active"); // アイドル状態の強調
         }
       }
 
@@ -895,10 +901,9 @@
       window.toggleConstructionMode = toggleConstructionMode;
       window.finalizeLine = finalizeLine;
       window.Game = Game;
-      window.showInfo = showInfo;
 
       document.addEventListener("DOMContentLoaded", () => {
-        // 1. Leafletマップの初期化
+        // 1. Leafletマップの初期化を最初に行う
         map = L.map("map").setView([INITIAL_LAT, INITIAL_LNG], 13);
         L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
           attribution: "© OpenStreetMap contributors (Base)",
@@ -909,38 +914,19 @@
           { attribution: "国土地理院", opacity: 0.5 }
         ).addTo(map);
 
-        // 2. UIコントロールをマップに追加 (LeafletコントロールとしてDOM要素を再利用)
-        
-        // 建設・車両コントロール
+        // 2. UIコントロールをマップに追加
         const controlDiv = document.querySelector(".rail-ui-control");
+        const controlHtml = controlDiv.innerHTML;
+        controlDiv.remove();
+
         const constructControl = L.control({ position: "topleft" });
         constructControl.onAdd = function (map) {
-          L.DomEvent.disableClickPropagation(controlDiv);
-          L.DomEvent.disableScrollPropagation(controlDiv);
-          return controlDiv;
+          const div = L.DomUtil.create("div", "rail-ui-control");
+          div.innerHTML = controlHtml;
+          L.DomEvent.disableClickPropagation(div);
+          return div;
         };
         constructControl.addTo(map);
-        
-        // ゲーム統計
-        const statsDiv = document.getElementById("game-stats");
-        const statsControl = L.control({ position: "topright" });
-        statsControl.onAdd = function (map) {
-          L.DomEvent.disableClickPropagation(statsDiv);
-          L.DomEvent.disableScrollPropagation(statsDiv);
-          return statsDiv;
-        };
-        statsControl.addTo(map);
-
-        // ランキングパネル
-        const rankingDiv = document.getElementById("ranking-panel");
-        const rankingControl = L.control({ position: "bottomright" });
-        rankingControl.onAdd = function (map) {
-          L.DomEvent.disableClickPropagation(rankingDiv);
-          L.DomEvent.disableScrollPropagation(rankingDiv);
-          return rankingDiv;
-        };
-        rankingControl.addTo(map);
-
 
         // 3. 建設モードの初期化
         toggleConstructionMode("idle");
