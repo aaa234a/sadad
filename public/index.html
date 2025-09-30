@@ -631,11 +631,41 @@
       }
 
       function updateTrainPositions(trainPositions) {
-        // ... (省略)
+        trainPositions.forEach((train) => {
+          if (Game.allTrainMarkers[train.id]) {
+            Game.allTrainMarkers[train.id].setLatLng(train.latlng);
+          } else {
+            const marker = L.divIcon({
+              className: "train-icon",
+              style: `background-color: ${train.color}; border-color: ${
+                train.owner === Game.userId ? "yellow" : "white"
+              };`,
+            });
+            Game.allTrainMarkers[train.id] = L.marker(train.latlng, {
+              icon: marker,
+            }).addTo(map);
+            Game.allTrainMarkers[train.id].bindPopup(
+              `列車 #${train.id} (Owner: ${train.owner})`
+            );
+          }
+        });
       }
 
       function updateRankingUI(ranking) {
-        // ... (省略)
+        const list = document.getElementById("ranking-list");
+        list.innerHTML = "";
+        // 3. 他の人のランキングで一人しか見えない: サーバー側で全ユーザーを取得するように修正したため、ここでは表示するだけ
+        ranking.forEach((item, index) => {
+          const li = document.createElement("li");
+          li.innerHTML = `${index + 1}. <b>${item.userId}</b>: ¥${Math.round(
+            item.score
+          ).toLocaleString()}`;
+          if (item.userId === Game.userId) {
+            li.style.fontWeight = "bold";
+            li.style.color = "#0044BB";
+          }
+          list.appendChild(li);
+        });
       }
 
       // =========================================================
