@@ -17,7 +17,7 @@ const io = socketio(server);
 // 0. データベース接続とMongooseスキーマ定義
 // =================================================================
 
-const MONGO_URI = process.env.MONGO_URI || "mongodb://localhost:27017/rail_tycoon";
+const MONGO_URI = process.env.ENV_MONGO_URI || "mongodb://localhost:27017/rail_tycoon";
 if (!MONGO_URI) {
     console.error("FATAL ERROR: MONGO_URI environment variable is not set.");
     process.exit(1);
@@ -277,6 +277,7 @@ class ServerVehicle {
         revenue *= (1 + Math.min(1.0, totalConnections * 0.1)); 
         if (ServerGame.users[this.ownerId]) {
             ServerGame.users[this.ownerId].money += Math.round(revenue);
+            ServerGame.users[this.ownerId].moneyUpdated = true; // 資金更新フラグを設定
         }
     }
 }
@@ -393,6 +394,7 @@ async function loadUserData(userId) {
         totalConstructionCost: userRow.totalConstructionCost,
         establishedLines: [],
         vehicles: [],
+        moneyUpdated: false, // 資金更新フラグを追加
     };
 
     const linesRes = await LineModel.find({ ownerId: userId }).lean();
@@ -574,7 +576,10 @@ async function serverSimulationLoop() {
         await calculateMonthlyMaintenance(); 
         await saveGlobalStats(); 
     }
+    
     const trainPositions = [];
+    const usersToUpdateFinancials = []; // 資金が更新されたユーザーを追跡
+    
     Object.values(ServerGame.users).forEach(user => {
         user.establishedLines.forEach(line => {
             line.runSimulation(gameDeltaSeconds); 
@@ -588,7 +593,25 @@ async function serverSimulationLoop() {
                 color: v.data.color
             });
         });
+
+        // 資金が更新されたユーザーをチェック
+        if (user.moneyUpdated) {
+            usersToUpdateFinancials.push(user);
+            user.moneyUpdated = false; // フラグをリセット
+        }
     });
+
+    // 資金が更新されたユーザーに個別に最新の資金情報を送信
+    usersToUpdateFinancials.forEach(user => {
+        if (user.socketId) {
+            io.to(user.socketId).emit('updateUserState', {
+                money: user.money,
+                // 車両リストは変わってない可能性が高いが、念のため車両数更新のために送信
+                vehicles: user.vehicles.map(v => ({ id: v.id, data: v.data })), 
+            });
+        }
+    });
+
     io.emit('gameUpdate', {
         time: gameTime.toISOString(),
         trainPositions: trainPositions,
@@ -725,7 +748,10 @@ io.on('connection', (socket) => {
             await saveUserFinancials(user.userId, user.money, user.totalConstructionCost);
             
             io.emit('stationBuilt', { latlng: data.latlng, id: newStation.id, ownerId: userId });
-            socket.emit('updateUserState', { money: user.money });
+            socket.emit('updateUserState', { 
+                money: user.money,
+                vehicles: user.vehicles.map(v => ({ id: v.id, data: v.data })), 
+            });
         } catch (error) {
             console.error("buildStation error:", error);
             socket.emit('error', '駅の建設中にエラーが発生しました。');
@@ -804,7 +830,8 @@ io.on('connection', (socket) => {
                     id: line.id, ownerId: line.ownerId, 
                     coords: line.coords, color: line.color, 
                     trackType: line.trackType, cost: line.cost // cost を追加
-                }))
+                })),
+                vehicles: user.vehicles.map(v => ({ id: v.id, data: v.data })), 
             });
         } catch (error) {
             console.error("buildLine error:", error);
@@ -863,6 +890,7 @@ io.on('connection', (socket) => {
             socket.emit('updateUserState', {
                 money: user.money,
                 totalConstructionCost: user.totalConstructionCost,
+                vehicles: user.vehicles.map(v => ({ id: v.id, data: v.data })),
             });
             socket.emit('info', result.message);
         } else {
