@@ -260,7 +260,7 @@ class ServerVehicle {
             }
         });
         
-        const safetyDistance = 0.5; // 500メートル手前でチェック
+        const safetyDistance = 1.0; // 500メートル手前でチェック
 
         if (nextStation) {
             const nextStationKm = this.getStationKm(nextStation);
