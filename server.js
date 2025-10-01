@@ -135,7 +135,7 @@ async function getAddressFromCoords(lat, lng) {
 
             
             // 町名・区名
-
+            if (address.suburb) return address.suburb;
             if (address.city_district) return address.city_district;
             if (address.town) return address.town;
             if (address.village) return address.village;
