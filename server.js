@@ -133,8 +133,6 @@ async function getAddressFromCoords(lat, lng) {
             const address = data.address;
             
             // ランドマークや道路名（最も具体的な地名）
-            if (address.road) return address.road;
-            if (address.amenity) return address.amenity;
             if (address.leisure) return address.leisure;
             if (address.building) return address.building;
             
