@@ -7,7 +7,7 @@ const path = require('path');
 const turf = require('@turf/turf'); 
 const mongoose = require('mongoose');
 const geolib = require('geolib'); 
-const fetch = require('node-fetch'); // ★追加: 外部API呼び出し用
+const axios = require('axios'); // ★変更: axiosを使用
 require('dotenv').config();
 
 const app = express();
@@ -113,20 +113,19 @@ const VehicleData = {
     TRAM: { name: "路面電車", maxSpeedKmH: 50, capacity: 150, maintenanceCostPerKm: 100, type: 'passenger', color: '#808080', purchaseMultiplier: 0.5 }, 
 };
 
-// ★追加: Nominatim APIからの地名取得関数
+// ★修正: Nominatim APIからの地名取得関数 (axios使用)
 async function getAddressFromCoords(lat, lng) {
     // OpenStreetMap Nominatim API (逆ジオコーディング)
     const url = `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lng}&format=json&accept-language=ja&zoom=16`;
     
     // Nominatimは利用規約により、高い負荷をかけないよう注意が必要です
-    // 適切なUser-Agentを設定することが推奨されていますが、ここでは省略します
+    // 適切なUser-Agentを設定することが推奨されています
     try {
-        const response = await fetch(url);
-        if (!response.ok) {
-            console.error(`Nominatim API Error: ${response.status} ${response.statusText}`);
-            return null;
-        }
-        const data = await response.json();
+        const response = await axios.get(url, {
+            headers: { "User-Agent": "RailwayTycoonGameServer/1.0 (Contact: your-email@example.com)" } // 適切なUser-Agentを設定
+        });
+        
+        const data = response.data;
         
         if (data.address) {
             // 日本語の地名を取得するロジック
@@ -156,20 +155,79 @@ async function getAddressFromCoords(lat, lng) {
         return null;
     } catch (error) {
         console.error("Error fetching address from Nominatim:", error.message);
-        return null;
+        // Nominatimが失敗した場合のフォールバックとして、geolibと静的データセットを使用
+        return getAddressFromCoordsFallback(lat, lng); 
     }
 }
 
-// ★修正: 駅名生成ロジックを非同期に変更し、Nominatimを使用
+// ★追加: Nominatim失敗時のフォールバック用（geolib + 静的データセット）
+const JAPAN_LANDMARKS = [
+    { name: "東京", lat: 35.681236, lng: 139.767125 },
+    { name: "大阪", lat: 34.702485, lng: 135.495952 },
+    { name: "名古屋", lat: 35.170915, lng: 136.881537 },
+    { name: "博多", lat: 33.590355, lng: 130.420658 },
+    { name: "札幌", lat: 43.068611, lng: 141.350833 },
+    { name: "横浜", lat: 35.465833, lng: 139.622778 },
+    { name: "仙台", lat: 38.260000, lng: 140.870000 },
+    { name: "広島", lat: 34.396389, lng: 132.459444 },
+    { name: "京都", lat: 35.001111, lng: 135.768333 },
+    { name: "神戸", lat: 34.690000, lng: 135.195556 },
+    { name: "千葉", lat: 35.604722, lng: 140.123333 },
+    { name: "大宮", lat: 35.906944, lng: 139.623056 },
+    { name: "新宿", lat: 35.689722, lng: 139.700556 },
+    { name: "渋谷", lat: 35.658056, lng: 139.701667 },
+    { name: "池袋", lat: 35.729722, lng: 139.710833 },
+    { name: "天王寺", lat: 34.646944, lng: 135.508611 },
+    { name: "新大阪", lat: 34.733333, lng: 135.500000 },
+    { name: "豊洲", lat: 35.657778, lng: 139.794444 },
+    { name: "お台場", lat: 35.626111, lng: 139.779722 },
+    { name: "羽田", lat: 35.549444, lng: 139.779722 },
+    { name: "三鷹", lat: 35.698333, lng: 139.558333 },
+    { name: "立川", lat: 35.701944, lng: 139.413333 },
+    { name: "八王子", lat: 35.658333, lng: 139.338333 },
+    { name: "浦和", lat: 35.868333, lng: 139.658333 },
+    { name: "船橋", lat: 35.696389, lng: 139.986389 },
+    { name: "川崎", lat: 35.530556, lng: 139.702222 },
+    { name: "熱海", lat: 35.101389, lng: 139.076944 },
+    { name: "静岡", lat: 34.972222, lng: 138.384444 },
+    { name: "浜松", lat: 34.708333, lng: 137.733333 },
+    { name: "金沢", lat: 36.577778, lng: 136.648333 },
+    { name: "新潟", lat: 37.916667, lng: 139.049444 },
+    { name: "岡山", lat: 34.661667, lng: 133.918333 },
+    { name: "高松", lat: 34.340278, lng: 134.046944 },
+    { name: "松山", lat: 33.841667, lng: 132.766667 },
+    { name: "長崎", lat: 32.750000, lng: 129.873056 },
+    { name: "熊本", lat: 32.789167, lng: 130.741667 },
+    { name: "那覇", lat: 26.216667, lng: 127.683333 },
+];
+
+function getAddressFromCoordsFallback(lat, lng) {
+    const targetCoord = { latitude: lat, longitude: lng };
+    
+    const nearest = geolib.findNearest(targetCoord, JAPAN_LANDMARKS.map(item => ({
+        latitude: item.lat,
+        longitude: item.lng,
+        name: item.name
+    })));
+    
+    if (nearest) {
+        const originalIndex = parseInt(nearest.key, 10);
+        return JAPAN_LANDMARKS[originalIndex].name;
+    }
+    
+    return null;
+}
+
+// ★修正: 駅名生成ロジックを非同期に戻し、Nominatimを使用
 async function generateRegionalStationName(lat, lng) {
     const regionalName = await getAddressFromCoords(lat, lng);
     
-    // 1. Nominatimから地名が取得できた場合
+    // 1. Nominatimまたはフォールバックから地名が取得できた場合
     if (regionalName) {
         // 取得した地名に「駅」を合成
         // 例: 「東京都江東区豊洲」 -> 「豊洲駅」
         // 地名から不要な部分（「通り」「公園」など）を削除し、簡潔な駅名にする
-        let baseName = regionalName.replace(/通り|公園|広場|交差点|ビル|マンション|アパート|丁目|番地/g, '').trim();
+        let baseName = regionalName.replace(/通り|公園|広場|交差点|ビル|マンション|アパート|丁目|番地|日本|Japan/g, '').trim();
         
         if (baseName.endsWith("駅")) {
             // 既に「駅」で終わっている場合はそのまま
@@ -185,7 +243,7 @@ async function generateRegionalStationName(lat, lng) {
         return `${baseName}駅`;
     }
     
-    // 2. フォールバック (Nominatimが失敗した場合)
+    // 2. 最終フォールバック (Nominatimもgeolibフォールバックも失敗した場合)
     const randomAreas = ["新興", "郊外", "住宅", "公園", "中央", "東", "西", "南", "北"];
     const randomSuffixes = ["台", "丘", "本", "前", "野", "ヶ原"];
     const area = randomAreas[Math.floor(Math.random() * randomAreas.length)];
@@ -960,7 +1018,7 @@ io.on('connection', (socket) => {
             const stationId = ServerGame.globalStats.nextStationId++;
             await saveGlobalStats();
             
-            // ★変更: 駅名を非同期で生成
+            // ★変更: 駅名を非同期で生成 (Nominatimを使用)
             const newStationName = await generateRegionalStationName(latlng[0], latlng[1]);
             
             const newStation = new ServerStation(stationId, latlng, userId, 'Small', newStationName); 
@@ -1219,7 +1277,7 @@ async function loadGlobalStats() {
         return station;
     });
     
-    // ★追加: 既存の仮駅名を持つ駅に対して、非同期で地名を取得し更新
+    // ★変更: 既存の仮駅名を持つ駅に対して、非同期で地名を取得し更新 (Nominatimを使用)
     const updatePromises = ServerGame.globalStats.stations
         .filter(s => s.name.startsWith("仮駅名"))
         .map(async (station) => {
