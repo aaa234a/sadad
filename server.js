@@ -225,9 +225,10 @@ async function generateRegionalStationName(lat, lng) {
     // 1. Nominatimまたはフォールバックから地名が取得できた場合
     if (regionalName) {
         // 取得した地名に「駅」を合成
-        // 例: 「東京都江東区豊洲」 -> 「豊洲駅」
-        // 地名から不要な部分（「通り」「公園」など）を削除し、簡潔な駅名にする
-        let baseName = regionalName.replace(/通り|公園|広場|交差点|ビル|マンション|アパート|丁目|番地|日本|Japan/g, '').trim();
+        // 例: 「東京都江東区豊洲四丁目」 -> 「豊洲駅」
+        // 地名から不要な部分（「通り」「公園」「〇丁目」など）を削除し、簡潔な駅名にする
+        // ★修正点: [一二三四五六七八九十]丁目 を追加
+        let baseName = regionalName.replace(/通り|公園|広場|交差点|ビル|マンション|アパート|[一二三四五六七八九十]丁目|番地|日本|Japan/g, '').trim();
         
         if (baseName.endsWith("駅")) {
             // 既に「駅」で終わっている場合はそのまま
