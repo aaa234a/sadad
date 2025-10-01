@@ -335,19 +335,17 @@
         money: 0,
         totalConstructionCost: 0,
         establishedLines: [],
-        allLines: {}, // 修正: ポリラインの配列を格納するようになる
+        allLines: {}, 
         stations: [],
         vehicles: [],
-        allTrainMarkers: {}, // 修正: { id: { original: Marker, copies: [Marker, Marker] } } の構造になる
+        allTrainMarkers: {}, 
         mode: "idle",
         currentTrackType: "single",
         
-        // 💡 修正点 4: UI更新のトリガー用変数を追加
         _lastLineCount: 0,
         _lastVehicleCount: 0,
 
         updateStats(data) {
-          // 資金、建設コスト、車両、路線情報を更新
           this.money = data.money !== undefined ? data.money : this.money;
           this.totalConstructionCost =
             data.totalConstructionCost !== undefined
@@ -367,7 +365,6 @@
         },
         
         updateFinancialUI() {
-            // 総資産の再計算: 資金 + 建設コストの70% (減価償却を考慮) + 車両の購入価格
             const totalAsset =
                 this.money +
                 this.totalConstructionCost * 0.7 +
@@ -396,7 +393,6 @@
           document.getElementById("station-count").textContent =
             data.globalStats.stationsCount;
             
-          // 資金が変動している可能性があるため、財務UIを更新
           this.updateFinancialUI();
         },
 
@@ -408,7 +404,6 @@
           return `${year}年${month}月${day}日 ${hour}時`;
         },
 
-        // 修正: 駅マーカーの削除ロジックを修正し、コピーも削除
         drawStations(stations) {
           this.stations.forEach((s) => s.markers.forEach(m => map.removeLayer(m)));
           this.stations = [];
@@ -418,34 +413,32 @@
                 s.id,
                 { lat: s.latlng[0], lng: s.latlng[1] },
                 map,
-                s.ownerId
+                s.ownerId,
+                s.type, 
+                s.capacity 
               )
           );
         },
 
-        // 修正: ポリラインの削除ロジックを修正し、コピーも削除
         drawLines(lines) {
           Object.values(this.allLines).forEach((polylines) => {
               polylines.forEach(p => map.removeLayer(p));
           });
           this.allLines = {};
-          // lines は全ユーザーの路線データ
           lines.forEach((line) => this.drawLine(line));
         },
 
-        // 修正: 経度オフセットしたポリラインのコピーを作成
         drawLine(line) {
           let weight = 8;
           if (line.trackType === "double") weight = 12;
           else if (line.trackType === "linear") weight = 15;
           else if (line.trackType === "tram") weight = 6;
 
-          // 自分の路線は太く、他人の路線は細くするなどの調整も可能
           const isMyLine = line.ownerId === Game.userId;
           const finalStyle = {
             color: line.color,
-            weight: isMyLine ? weight : weight * 0.7, // 他人の路線は少し細く
-            opacity: isMyLine ? 1 : 0.7, // 他人の路線は少し薄く
+            weight: isMyLine ? weight : weight * 0.7, 
+            opacity: isMyLine ? 1 : 0.7, 
             lineCap: "round",
           };
           
@@ -453,7 +446,6 @@
           const polylines = [];
 
           longitudeOffsets.forEach((offset) => {
-            // 座標をオフセット
             const offsetCoords = line.coords.map(coord => 
                 L.latLng(coord[0], coord[1] + offset)
             );
@@ -470,18 +462,20 @@
       let drawingPolyline = null;
       let lineCandidateNodes = [];
 
-      // 修正: 経度オフセットしたマーカーのコピーを作成
       class Station {
-        constructor(id, latlng, map, ownerId) {
+        constructor(id, latlng, map, ownerId, type = 'Small', capacity = 3) {
           this.id = id;
           this.latlng = latlng;
           this.ownerId = ownerId;
           this.name = `駅 ${id}`;
-          this.markers = []; // マーカーを配列で管理 (オリジナルとコピー)
+          this.type = type; 
+          this.capacity = capacity; 
+          this.markers = []; 
 
-          // 自分の駅は青、他人の駅は赤
           const stationColor = ownerId === Game.userId ? "#0044BB" : "#FF0000";
-          const popupContent = `<b>${this.name} (ID: ${this.id})</b><br>Owner: ${ownerId}`;
+          
+          const popupContent = this.generatePopupContent();
+          
           const stationIcon = L.divIcon({
             className: "station-icon",
             style: `background-color: ${stationColor};`,
@@ -498,7 +492,6 @@
 
             marker.bindPopup(popupContent);
             
-            // クリックイベントを各マーカーに追加
             marker.on("click", (e) => {
               if (Game.mode === "track" || Game.mode === "dismantle-station") {
                 handleStationClick(this);
@@ -512,10 +505,31 @@
             this.markers.push(marker);
           });
 
-          // 既存のコードとの互換性のため、0度オフセットのマーカーを this.marker に保持
           this.marker = this.markers[1]; 
           
           Game.stations.push(this);
+        }
+
+        generatePopupContent() {
+            let popupContent = `<b>${this.name} (ID: ${this.id})</b><br>Owner: ${this.ownerId}`;
+            popupContent += `<br>種類: ${this.type} (${this.capacity}列車)`;
+            
+            if (this.ownerId === Game.userId) {
+                const isMedium = this.type === 'Medium';
+                const isLarge = this.type === 'Large';
+
+                popupContent += `<hr>
+                  <button onclick="upgradeStation(${this.id}, 'Medium')" ${isMedium || isLarge ? 'disabled' : ''} style="width: 100%; margin-bottom: 5px;">中規模にアップグレード (¥50M)</button>
+                  <button onclick="upgradeStation(${this.id}, 'Large')" ${isLarge ? 'disabled' : ''} style="width: 100%;">大規模にアップグレード (${isMedium ? '¥100M' : '¥150M'})</button>`;
+            }
+            return popupContent;
+        }
+
+        updatePopup() {
+            const newContent = this.generatePopupContent();
+            this.markers.forEach(marker => {
+                marker.bindPopup(newContent);
+            });
         }
       }
 
@@ -580,17 +594,14 @@
             Game.drawLines(data.allLines);
           }
           
-          // 💡 修正点 5: 初回は必ずUIを更新し、カウントを初期化
           updateVehicleBuyUI();
           Game._lastLineCount = data.establishedLines ? data.establishedLines.length : 0;
           Game._lastVehicleCount = data.vehicles ? data.vehicles.length : 0;
         });
 
         socket.on("updateUserState", (data) => {
-          // 資金、建設コスト、車両リストが更新される (リアルタイム収益更新を含む)
           Game.updateStats(data);
           
-          // 💡 修正点 6: 路線数または車両数に変化があった場合のみUIを更新
           const currentLineCount = data.establishedLines ? data.establishedLines.length : Game._lastLineCount;
           const currentVehicleCount = data.vehicles ? data.vehicles.length : Game._lastVehicleCount;
 
@@ -602,7 +613,6 @@
         });
 
         socket.on("gameUpdate", (data) => {
-          // 時間、月次維持費、駅数などが更新される (全ユーザー向け)
           Game.updateGlobalStats(data);
           updateTrainPositions(data.trainPositions);
         });
@@ -612,23 +622,28 @@
         });
 
         socket.on("stationBuilt", (data) => {
-          new Station(data.id, data.latlng, map, data.ownerId);
-          // 駅数が変わったので、グローバル統計を再描画
+          new Station(data.id, data.latlng, map, data.ownerId, data.type, data.capacity);
           Game.updateGlobalStats({ globalStats: { stationsCount: Game.stations.length } });
+        });
+        
+        socket.on("stationUpgraded", (data) => {
+          const station = Game.stations.find(s => s.id === data.id);
+          if (station) {
+              station.type = data.type;
+              station.capacity = data.capacity;
+              station.updatePopup();
+          }
         });
 
         socket.on("lineBuilt", (data) => {
           Game.drawLine(data);
-          // 自分の路線リストの更新はupdateUserStateに任せる
         });
 
-        // 修正: ポリライン配列内の全てのコピーを削除
         socket.on("lineDismantled", (data) => {
           if (Game.allLines[data.lineId]) {
             Game.allLines[data.lineId].forEach(p => map.removeLayer(p));
             delete Game.allLines[data.lineId];
           }
-          // 自分の路線リストの更新はupdateUserStateに任せる
         });
 
         socket.on("stationDismantled", (data) => {
@@ -636,11 +651,9 @@
             (s) => s.id === data.stationId
           );
           if (stationIndex !== -1) {
-            // 修正: Stationクラスで管理している全てのマーカーを削除
             Game.stations[stationIndex].markers.forEach(m => map.removeLayer(m));
             Game.stations.splice(stationIndex, 1);
           }
-          // 駅数が変わったので、グローバル統計を再描画
           Game.updateGlobalStats({ globalStats: { stationsCount: Game.stations.length } });
         });
 
@@ -663,19 +676,16 @@
         });
       }
 
-      // 修正: 経度オフセットした列車マーカーのコピーを作成・更新
       function updateTrainPositions(trainPositions) {
         const longitudeOffsets = [-360, 0, 360];
         const existingTrainIds = new Set(Object.keys(Game.allTrainMarkers));
 
         trainPositions.forEach((train) => {
-          // ★ 修正: train.latlng が配列であり、長さが2であることをチェック
           if (!Array.isArray(train.latlng) || train.latlng.length !== 2) {
               console.warn(`列車ID ${train.id} の位置情報が不正です:`, train.latlng);
-              return; // 不正なデータはスキップ
+              return; 
           }
 
-          // 修正: 配列のインデックス [0] (緯度) と [1] (経度) を使用
           const latlng = L.latLng(train.latlng[0], train.latlng[1]);
           existingTrainIds.delete(train.id.toString());
 
@@ -685,21 +695,19 @@
 
           const markerData = Game.allTrainMarkers[train.id];
 
-          // アイコンの定義は共通
           const markerIcon = L.divIcon({
             className: "train-icon",
             style: `background-color: ${train.color}; border-color: ${
               train.owner === Game.userId ? "yellow" : "white"
             };`,
           });
-          const popupContent = `列車 #${train.id} (Owner: ${train.owner})`;
+          const popupContent = `列車 #${train.id} (Owner: ${train.owner}) - Status: ${train.status || 'Running'}`;
 
           longitudeOffsets.forEach((offset, index) => {
-            // 経度オフセットを適用
             const offsetLatLng = L.latLng(latlng.lat, latlng.lng + offset);
             let marker;
 
-            if (index === 1) { // 0度オフセット（オリジナル）
+            if (index === 1) { 
               if (!markerData.original) {
                 marker = L.marker(offsetLatLng, { icon: markerIcon }).addTo(map);
                 marker.bindPopup(popupContent);
@@ -707,8 +715,9 @@
               } else {
                 markerData.original.setLatLng(offsetLatLng);
                 markerData.original.setIcon(markerIcon);
+                markerData.original.setPopupContent(popupContent);
               }
-            } else { // -360度, +360度オフセット（コピー）
+            } else { 
               const copyIndex = index === 0 ? 0 : 1;
               if (!markerData.copies[copyIndex]) {
                 marker = L.marker(offsetLatLng, { icon: markerIcon }).addTo(map);
@@ -717,17 +726,17 @@
               } else {
                 markerData.copies[copyIndex].setLatLng(offsetLatLng);
                 markerData.copies[copyIndex].setIcon(markerIcon);
+                markerData.copies[copyIndex].setPopupContent(popupContent);
               }
             }
           });
         });
 
-        // サーバー側で削除された列車マーカーをマップから削除
         existingTrainIds.forEach(trainId => {
             const markerData = Game.allTrainMarkers[trainId];
             if (markerData.original) map.removeLayer(markerData.original);
             markerData.copies.forEach(copy => {
-                if (copy) map.removeLayer(copy); // copyがnullでないかチェック
+                if (copy) map.removeLayer(copy); 
             });
             delete Game.allTrainMarkers[trainId];
         });
@@ -736,7 +745,6 @@
       function updateRankingUI(ranking) {
         const list = document.getElementById("ranking-list");
         list.innerHTML = "";
-        // 3. 他の人のランキングで一人しか見えない: サーバー側で全ユーザーを取得するように修正したため、ここでは表示するだけ
         ranking.forEach((item, index) => {
           const li = document.createElement("li");
           li.innerHTML = `${index + 1}. <b>${item.userId}</b>: ¥${Math.round(
@@ -756,7 +764,6 @@
 
        function handleStationCreation(e) {
         if (Game.mode !== "station" || !socket) return;
-        // 2. 範囲内に相手の駅があると立てれなくする: サーバー側でチェックを行う
         socket.emit("buildStation", { latlng: e.latlng });
       }
 
@@ -782,7 +789,6 @@
 
       function handleStationClick(station) {
         if (Game.mode === "track") {
-          // 路線建設モード
           if (station.ownerId !== Game.userId) {
             alert("他プレイヤーの駅は路線のノードとして使用できません。");
             return;
@@ -808,7 +814,6 @@
                 .setLatLngs(currentCoords)
                 .setStyle({ color: "#C0C0C0", weight: weight });
             } else {
-              // 路線建設中のポリラインはコピー不要（一時的なもののため）
               drawingPolyline = L.polyline(currentCoords, {
                 color: "#C0C0C0",
                 weight: weight,
@@ -818,7 +823,6 @@
             }
           }
         } else if (Game.mode === "dismantle-station") {
-          // 駅解体モード
           handleStationDismantle(station);
         }
       }
@@ -845,21 +849,39 @@
         toggleConstructionMode("idle");
       }
 
-      // 修正: コピーされたポリラインも含めてクリック判定
+      window.upgradeStation = (stationId, newType) => {
+        if (!socket) return alert("サーバーに接続されていません。");
+        
+        const station = Game.stations.find(s => s.id === stationId);
+        if (!station) return;
+
+        let cost = 0;
+        const currentType = station.type;
+
+        if (newType === 'Medium' && currentType === 'Small') {
+            cost = 50000000; 
+        } else if (newType === 'Large' && currentType === 'Small') {
+            cost = 150000000; 
+        } else if (newType === 'Large' && currentType === 'Medium') {
+            cost = 100000000; 
+        } else {
+            return; 
+        }
+
+        if (confirm(`${station.name} を ${newType} 駅にアップグレードしますか？ (費用: ¥${cost.toLocaleString()})`)) {
+            socket.emit("upgradeStation", { stationId: stationId, newType: newType, cost: cost });
+        }
+      };
+
       function handleLineDismantle(e) {
         if (Game.mode !== "dismantle-line" || !socket) return;
 
-        let closestLine = null;
         let closestLineId = null;
         let minDistance = Infinity;
-        const lineSearchRadiusMeters = 50; // 50m以内を許容範囲とする
+        const lineSearchRadiusMeters = 50; 
 
-        // 🔹全ての路線を対象にする
         Object.entries(Game.allLines).forEach(([lineId, polylines]) => {
-          // polylines は [Polyline(-360), Polyline(0), Polyline(+360)] の配列
-          
           polylines.forEach(polyline => {
-              // polylineがnullでないことを確認
               if (!polyline) return;
 
               const latlngs = polyline.getLatLngs();
@@ -868,30 +890,24 @@
                   
                   if (dist < minDistance && dist < lineSearchRadiusMeters) {
                       minDistance = dist;
-                      // 💡 コピーされたポリラインがクリックされても、元のlineIdを特定
-                      closestLine = polyline;
                       closestLineId = lineId;
                   }
               });
           });
         });
 
-        if (!closestLine || !closestLineId) {
+        if (!closestLineId) {
           alert("クリックした位置の近くに解体できる路線が見つかりません。");
           return;
         }
 
-        // 🔹lineIdからlineDataを取得
-        // Game.establishedLines にはサーバーからコスト情報が含まれて送られてくることを前提とする
         const lineData = Game.establishedLines.find((l) => l.id == closestLineId);
 
-        // 🔹オーナー確認（自分の路線しか解体できない）
         if (!lineData || lineData.ownerId !== Game.userId) {
           alert("自分の路線のみ解体可能です。");
           return;
         }
 
-        // 修正: lineData.cost を使用
         const dismantleCost = Math.round(lineData.cost * 0.1);
         if (
           confirm(
@@ -947,10 +963,9 @@
             .classList.add("active");
           map.on("click", handleLineDismantle);
         } else {
-          document.getElementById("btn-station-mode").classList.add("active"); // アイドル状態の強調
+          document.getElementById("btn-station-mode").classList.add("active"); 
         }
         
-        // モード切り替え時に選択状態を復元
         const trackTypeSelect = document.getElementById("track-type");
         if (trackTypeSelect) {
             trackTypeSelect.value = Game.currentTrackType;
@@ -1047,9 +1062,7 @@
       window.Game = Game;
 
       document.addEventListener("DOMContentLoaded", () => {
-        // 1. Leafletマップの初期化を最初に行う
         map = L.map("map", {
-            // 💡 経度ループを有効にする設定 (デフォルトで有効なことが多いが、明示的に)
             worldCopyJump: true 
         }).setView([INITIAL_LAT, INITIAL_LNG], 13);
         L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
@@ -1062,7 +1075,6 @@
           { attribution: "国土地理院", opacity: 0.5 }
         ).addTo(map);
 
-        // 2. UIコントロールをマップに追加
         const controlDiv = document.querySelector(".rail-ui-control");
         const controlHtml = controlDiv.innerHTML;
         controlDiv.remove();
@@ -1073,7 +1085,6 @@
           div.innerHTML = controlHtml;
           L.DomEvent.disableClickPropagation(div);
           
-          // 要素がDOMに追加された直後に選択値を復元
           const trackTypeSelect = div.querySelector("#track-type");
           if (trackTypeSelect) {
               trackTypeSelect.value = Game.currentTrackType;
@@ -1083,10 +1094,8 @@
         };
         constructControl.addTo(map);
 
-        // 3. 建設モードの初期化
         toggleConstructionMode("idle");
 
-        // 4. ログイン処理
         const savedUserId = getCookie("userId");
         if (savedUserId) {
           document.getElementById("username-input").value = savedUserId;
