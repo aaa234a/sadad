@@ -335,10 +335,10 @@
         money: 0,
         totalConstructionCost: 0,
         establishedLines: [],
-        allLines: {},
+        allLines: {}, // 修正: ポリラインの配列を格納するようになる
         stations: [],
         vehicles: [],
-        allTrainMarkers: {},
+        allTrainMarkers: {}, // 修正: { id: { original: Marker, copies: [Marker, Marker] } } の構造になる
         mode: "idle",
         currentTrackType: "single",
         
@@ -408,8 +408,9 @@
           return `${year}年${month}月${day}日 ${hour}時`;
         },
 
+        // 修正: 駅マーカーの削除ロジックを修正し、コピーも削除
         drawStations(stations) {
-          this.stations.forEach((s) => map.removeLayer(s.marker));
+          this.stations.forEach((s) => s.markers.forEach(m => map.removeLayer(m)));
           this.stations = [];
           stations.forEach(
             (s) =>
@@ -422,13 +423,17 @@
           );
         },
 
+        // 修正: ポリラインの削除ロジックを修正し、コピーも削除
         drawLines(lines) {
-          Object.values(this.allLines).forEach((l) => map.removeLayer(l));
+          Object.values(this.allLines).forEach((polylines) => {
+              polylines.forEach(p => map.removeLayer(p));
+          });
           this.allLines = {};
           // lines は全ユーザーの路線データ
           lines.forEach((line) => this.drawLine(line));
         },
 
+        // 修正: 経度オフセットしたポリラインのコピーを作成
         drawLine(line) {
           let weight = 8;
           if (line.trackType === "double") weight = 12;
@@ -443,8 +448,21 @@
             opacity: isMyLine ? 1 : 0.7, // 他人の路線は少し薄く
             lineCap: "round",
           };
-          this.allLines[line.id] = L.polyline(line.coords, finalStyle)
-            .addTo(map);
+          
+          const longitudeOffsets = [-360, 0, 360];
+          const polylines = [];
+
+          longitudeOffsets.forEach((offset) => {
+            // 座標をオフセット
+            const offsetCoords = line.coords.map(coord => 
+                L.latLng(coord[0], coord[1] + offset)
+            );
+            
+            const polyline = L.polyline(offsetCoords, finalStyle).addTo(map);
+            polylines.push(polyline);
+          });
+          
+          this.allLines[line.id] = polylines;
         },
       };
 
@@ -452,38 +470,51 @@
       let drawingPolyline = null;
       let lineCandidateNodes = [];
 
+      // 修正: 経度オフセットしたマーカーのコピーを作成
       class Station {
         constructor(id, latlng, map, ownerId) {
           this.id = id;
           this.latlng = latlng;
           this.ownerId = ownerId;
           this.name = `駅 ${id}`;
+          this.markers = []; // マーカーを配列で管理 (オリジナルとコピー)
 
           // 自分の駅は青、他人の駅は赤
           const stationColor = ownerId === Game.userId ? "#0044BB" : "#FF0000";
-
-          this.marker = L.marker(latlng, {
-            icon: L.divIcon({
-              className: "station-icon",
-              style: `background-color: ${stationColor};`,
-            }),
-            title: this.name,
-          }).addTo(map);
-
-          this.marker.bindPopup(
-            `<b>${this.name} (ID: ${this.id})</b><br>Owner: ${ownerId}`
-          );
-          this.marker.on("click", (e) => {
-            if (Game.mode === "track" || Game.mode === "dismantle-station") {
-              handleStationClick(this);
-              L.DomEvent.stopPropagation(e); // Leafletのイベント伝播を停止
-              
-              // 元のDOMイベントの伝播も停止し、UIの安定性を向上
-              if (e.originalEvent) {
-                  e.originalEvent.stopPropagation();
-              }
-            }
+          const popupContent = `<b>${this.name} (ID: ${this.id})</b><br>Owner: ${ownerId}`;
+          const stationIcon = L.divIcon({
+            className: "station-icon",
+            style: `background-color: ${stationColor};`,
           });
+          
+          const longitudeOffsets = [-360, 0, 360];
+
+          longitudeOffsets.forEach((offset) => {
+            const offsetLatLng = L.latLng(latlng.lat, latlng.lng + offset);
+            const marker = L.marker(offsetLatLng, {
+              icon: stationIcon,
+              title: this.name,
+            }).addTo(map);
+
+            marker.bindPopup(popupContent);
+            
+            // クリックイベントを各マーカーに追加
+            marker.on("click", (e) => {
+              if (Game.mode === "track" || Game.mode === "dismantle-station") {
+                handleStationClick(this);
+                L.DomEvent.stopPropagation(e);
+                if (e.originalEvent) {
+                    e.originalEvent.stopPropagation();
+                }
+              }
+            });
+            
+            this.markers.push(marker);
+          });
+
+          // 既存のコードとの互換性のため、0度オフセットのマーカーを this.marker に保持
+          this.marker = this.markers[1]; 
+          
           Game.stations.push(this);
         }
       }
@@ -591,9 +622,10 @@
           // 自分の路線リストの更新はupdateUserStateに任せる
         });
 
+        // 修正: ポリライン配列内の全てのコピーを削除
         socket.on("lineDismantled", (data) => {
           if (Game.allLines[data.lineId]) {
-            map.removeLayer(Game.allLines[data.lineId]);
+            Game.allLines[data.lineId].forEach(p => map.removeLayer(p));
             delete Game.allLines[data.lineId];
           }
           // 自分の路線リストの更新はupdateUserStateに任せる
@@ -604,7 +636,8 @@
             (s) => s.id === data.stationId
           );
           if (stationIndex !== -1) {
-            map.removeLayer(Game.stations[stationIndex].marker);
+            // 修正: Stationクラスで管理している全てのマーカーを削除
+            Game.stations[stationIndex].markers.forEach(m => map.removeLayer(m));
             Game.stations.splice(stationIndex, 1);
           }
           // 駅数が変わったので、グローバル統計を再描画
@@ -630,24 +663,63 @@
         });
       }
 
+      // 修正: 経度オフセットした列車マーカーのコピーを作成・更新
       function updateTrainPositions(trainPositions) {
+        const longitudeOffsets = [-360, 0, 360];
+        const existingTrainIds = new Set(Object.keys(Game.allTrainMarkers));
+
         trainPositions.forEach((train) => {
-          if (Game.allTrainMarkers[train.id]) {
-            Game.allTrainMarkers[train.id].setLatLng(train.latlng);
-          } else {
-            const marker = L.divIcon({
-              className: "train-icon",
-              style: `background-color: ${train.color}; border-color: ${
-                train.owner === Game.userId ? "yellow" : "white"
-              };`,
-            });
-            Game.allTrainMarkers[train.id] = L.marker(train.latlng, {
-              icon: marker,
-            }).addTo(map);
-            Game.allTrainMarkers[train.id].bindPopup(
-              `列車 #${train.id} (Owner: ${train.owner})`
-            );
+          const latlng = L.latLng(train.latlng.lat, train.latlng.lng);
+          existingTrainIds.delete(train.id.toString());
+
+          if (!Game.allTrainMarkers[train.id]) {
+            Game.allTrainMarkers[train.id] = { original: null, copies: [] };
           }
+
+          const markerData = Game.allTrainMarkers[train.id];
+
+          // アイコンの定義は共通
+          const markerIcon = L.divIcon({
+            className: "train-icon",
+            style: `background-color: ${train.color}; border-color: ${
+              train.owner === Game.userId ? "yellow" : "white"
+            };`,
+          });
+          const popupContent = `列車 #${train.id} (Owner: ${train.owner})`;
+
+          longitudeOffsets.forEach((offset, index) => {
+            const offsetLatLng = L.latLng(latlng.lat, latlng.lng + offset);
+            let marker;
+
+            if (index === 1) { // 0度オフセット（オリジナル）
+              if (!markerData.original) {
+                marker = L.marker(offsetLatLng, { icon: markerIcon }).addTo(map);
+                marker.bindPopup(popupContent);
+                markerData.original = marker;
+              } else {
+                markerData.original.setLatLng(offsetLatLng);
+                markerData.original.setIcon(markerIcon);
+              }
+            } else { // -360度, +360度オフセット（コピー）
+              const copyIndex = index === 0 ? 0 : 1;
+              if (!markerData.copies[copyIndex]) {
+                marker = L.marker(offsetLatLng, { icon: markerIcon }).addTo(map);
+                marker.bindPopup(popupContent);
+                markerData.copies[copyIndex] = marker;
+              } else {
+                markerData.copies[copyIndex].setLatLng(offsetLatLng);
+                markerData.copies[copyIndex].setIcon(markerIcon);
+              }
+            }
+          });
+        });
+
+        // サーバー側で削除された列車マーカーをマップから削除
+        existingTrainIds.forEach(trainId => {
+            const markerData = Game.allTrainMarkers[trainId];
+            if (markerData.original) map.removeLayer(markerData.original);
+            markerData.copies.forEach(copy => map.removeLayer(copy));
+            delete Game.allTrainMarkers[trainId];
         });
       }
 
@@ -726,6 +798,7 @@
                 .setLatLngs(currentCoords)
                 .setStyle({ color: "#C0C0C0", weight: weight });
             } else {
+              // 路線建設中のポリラインはコピー不要（一時的なもののため）
               drawingPolyline = L.polyline(currentCoords, {
                 color: "#C0C0C0",
                 weight: weight,
@@ -762,6 +835,7 @@
         toggleConstructionMode("idle");
       }
 
+      // 修正: コピーされたポリラインも含めてクリック判定
       function handleLineDismantle(e) {
         if (Game.mode !== "dismantle-line" || !socket) return;
 
@@ -771,15 +845,21 @@
         const lineSearchRadiusMeters = 50; // 50m以内を許容範囲とする
 
         // 🔹全ての路線を対象にする
-        Object.entries(Game.allLines).forEach(([lineId, polyline]) => {
-          const latlngs = polyline.getLatLngs();
-          latlngs.forEach((latlng) => {
-            const dist = e.latlng.distanceTo(latlng);
-            if (dist < minDistance && dist < lineSearchRadiusMeters) {
-              minDistance = dist;
-              closestLine = polyline;
-              closestLineId = lineId;
-            }
+        Object.entries(Game.allLines).forEach(([lineId, polylines]) => {
+          // polylines は [Polyline(-360), Polyline(0), Polyline(+360)] の配列
+          
+          polylines.forEach(polyline => {
+              const latlngs = polyline.getLatLngs();
+              latlngs.forEach((latlng) => {
+                  const dist = e.latlng.distanceTo(latlng);
+                  
+                  if (dist < minDistance && dist < lineSearchRadiusMeters) {
+                      minDistance = dist;
+                      // 💡 コピーされたポリラインがクリックされても、元のlineIdを特定
+                      closestLine = polyline;
+                      closestLineId = lineId;
+                  }
+              });
           });
         });
 
@@ -955,7 +1035,10 @@
 
       document.addEventListener("DOMContentLoaded", () => {
         // 1. Leafletマップの初期化を最初に行う
-        map = L.map("map").setView([INITIAL_LAT, INITIAL_LNG], 13);
+        map = L.map("map", {
+            // 💡 経度ループを有効にする設定 (デフォルトで有効なことが多いが、明示的に)
+            worldCopyJump: true 
+        }).setView([INITIAL_LAT, INITIAL_LNG], 13);
         L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
           attribution: "© OpenStreetMap contributors (Base)",
           maxZoom: 19,
