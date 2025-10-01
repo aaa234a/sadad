@@ -58,7 +58,7 @@ const StationSchema = new mongoose.Schema({
     ownerId: { type: String, required: true },
     lat: Number,
     lng: Number,
-    name: String,
+    name: String, // ★変更: 駅名フィールド
     demand: { 
         passenger: Number,
         freight: Number
@@ -110,6 +110,28 @@ const VehicleData = {
     SLEEPER: { name: "寝台列車", maxSpeedKmH: 110, capacity: 200, maintenanceCostPerKm: 800, type: 'passenger', color: '#4B0082', purchaseMultiplier: 3.0, revenueMultiplier: 2.0 }, 
     TRAM: { name: "路面電車", maxSpeedKmH: 50, capacity: 150, maintenanceCostPerKm: 100, type: 'passenger', color: '#808080', purchaseMultiplier: 0.5 }, 
 };
+
+// ★追加: 緯度・経度から地域名を推定するダミー関数
+function generateRegionalStationName(lat, lng) {
+    const areas = ["東京", "新宿", "渋谷", "品川", "横浜", "川崎", "大宮", "千葉", "船橋", "大阪", "名古屋", "福岡", "札幌", "仙台", "広島", "京都", "神戸"];
+    const suffixes = ["中央", "西口", "東口", "北", "南", "新", "本", "前", "台", "丘"];
+    
+    // 緯度経度からランダムシードを生成 (簡易的な地域依存性)
+    const latSeed = Math.floor(lat * 10000) % areas.length;
+    const lngSeed = Math.floor(lng * 10000) % suffixes.length;
+    
+    // シードに基づいて地名を決定
+    const area = areas[(latSeed + lngSeed) % areas.length];
+    const suffix = suffixes[(latSeed + lngSeed * 2) % suffixes.length];
+    
+    // 確率で接尾辞を付与
+    if (Math.random() < 0.7) {
+        return `${area}${suffix}駅`;
+    } else {
+        return `${area}駅`;
+    }
+}
+
 function getElevation(lat, lng) {
     const TOKYO_BAY_LAT = 35.6;
     const TOKYO_BAY_LNG = 139.7;
@@ -152,11 +174,12 @@ function calculateConstructionCost(coord1, coord2, trackType) {
 // B. サーバーサイド・クラス定義
 // =================================================================
 class ServerStation {
-    constructor(id, latlng, ownerId, type = 'Small') {
+    // ★変更: コンストラクタで名前を自動生成
+    constructor(id, latlng, ownerId, type = 'Small', initialName = null) {
         this.id = id;
         this.latlng = latlng;
         this.ownerId = ownerId;
-        this.name = `駅 ${id}`;
+        this.name = initialName || generateRegionalStationName(latlng[0], latlng[1]); // ★変更
         this.demand = { 
             passenger: Math.round(50 + Math.random() * 300),
             freight: Math.round(10 + Math.random() * 100)
@@ -520,6 +543,36 @@ async function loadUserData(userId) {
     });
     return user;
 }
+
+// ★追加: 駅名リネーム関数
+async function renameStation(userId, stationId, newName) {
+    const user = ServerGame.users[userId];
+    if (!user) return { success: false, message: "ユーザーが見つかりません。" };
+    
+    const globalStation = ServerGame.globalStats.stations.find(s => s.id === stationId && s.ownerId === userId);
+    if (!globalStation) return { success: false, message: "あなたの駅が見つかりません。" };
+    
+    if (newName.length < 2 || newName.length > 20) {
+        return { success: false, message: "駅名は2文字以上20文字以内で入力してください。" };
+    }
+    
+    const oldName = globalStation.name;
+    globalStation.name = newName;
+
+    await StationModel.updateOne(
+        { id: stationId },
+        { $set: { name: newName } }
+    );
+    
+    return { 
+        success: true, 
+        oldName: oldName,
+        newName: newName,
+        message: `${oldName} を ${newName} にリネームしました。`
+    };
+}
+
+
 // =================================================================
 // C-2. ゲームロジック関数
 // =================================================================
@@ -640,7 +693,7 @@ async function dismantleStation(userId, stationId) {
     await saveUserFinancials(user.userId, user.money, user.totalConstructionCost);
     return { 
         success: true, 
-        message: `駅 ${stationId} を解体しました。`,
+        message: `駅 ${stationToDismantle.name} (ID: ${stationId}) を解体しました。`, // ★変更: 駅名表示
         stationId: stationId,
         dismantleCost: dismantleCost
     };
@@ -808,7 +861,7 @@ io.on('connection', (socket) => {
             allLines: allClientLines, 
             vehicles: userState.vehicles.map(v => ({ id: v.id, data: v.data })), 
             stations: ServerGame.globalStats.stations.map(s => ({ 
-                id: s.id, latlng: [s.lat, s.lng], ownerId: s.ownerId, type: s.type, capacity: s.capacity 
+                id: s.id, latlng: [s.lat, s.lng], ownerId: s.ownerId, type: s.type, capacity: s.capacity, name: s.name // ★変更: 駅名を追加
             })), 
             vehicleData: ServerGame.VehicleData,
         });
@@ -842,14 +895,14 @@ io.on('connection', (socket) => {
             const stationId = ServerGame.globalStats.nextStationId++;
             await saveGlobalStats();
             
-            const newStation = new ServerStation(stationId, latlng, userId, 'Small'); 
+            const newStation = new ServerStation(stationId, latlng, userId, 'Small'); // ★変更: 名前はコンストラクタで自動生成
             
             await StationModel.create({
                 id: newStation.id,
                 ownerId: newStation.ownerId,
                 lat: latlng[0],
                 lng: latlng[1],
-                name: newStation.name,
+                name: newStation.name, // ★変更: 自動生成された名前を保存
                 demand: newStation.demand,
                 lineConnections: newStation.lineConnections,
                 type: newStation.type, 
@@ -862,7 +915,7 @@ io.on('connection', (socket) => {
             await saveUserFinancials(user.userId, user.money, user.totalConstructionCost);
             
             io.emit('stationBuilt', { 
-                latlng: data.latlng, id: newStation.id, ownerId: userId, type: newStation.type, capacity: newStation.capacity 
+                latlng: data.latlng, id: newStation.id, ownerId: userId, type: newStation.type, capacity: newStation.capacity, name: newStation.name // ★変更: 駅名を送信
             });
             socket.emit('updateUserState', { 
                 money: user.money,
@@ -891,6 +944,24 @@ io.on('connection', (socket) => {
             socket.emit('updateUserState', { 
                 money: user.money,
                 vehicles: user.vehicles.map(v => ({ id: v.id, data: v.data })), 
+            });
+            socket.emit('info', result.message);
+        } else {
+            socket.emit('error', result.message);
+        }
+    });
+    
+    // ★追加: 駅リネームイベントハンドラ
+    socket.on('renameStation', async (data) => {
+        if (!userId) return;
+        
+        const result = await renameStation(userId, data.stationId, data.newName);
+        
+        if (result.success) {
+            // 全クライアントに駅名変更を通知
+            io.emit('stationRenamed', { 
+                id: data.stationId, 
+                newName: result.newName 
             });
             socket.emit('info', result.message);
         } else {
@@ -1066,8 +1137,15 @@ async function loadGlobalStats() {
 
     const stationsRes = await StationModel.find({}).lean();
     ServerGame.globalStats.stations = stationsRes.map(row => {
-        const station = new ServerStation(row.id, [row.lat, row.lng], row.ownerId, row.type || 'Small');
-        station.name = row.name;
+        // ★変更: 既存の駅の命名規則をチェックし、古い名前であれば新しい地域名ベースの名前に更新
+        let stationName = row.name;
+        if (!stationName || stationName.startsWith("駅 ")) {
+             stationName = generateRegionalStationName(row.lat, row.lng);
+             // DBも更新 (非同期で実行、待機はしない)
+             StationModel.updateOne({ id: row.id }, { $set: { name: stationName } }).catch(err => console.error("駅名DB更新エラー:", err));
+        }
+        
+        const station = new ServerStation(row.id, [row.lat, row.lng], row.ownerId, row.type || 'Small', stationName); // ★変更: ロードした名前を渡す
         station.demand = row.demand;
         station.lineConnections = row.lineConnections;
         station.capacity = station.getCapacityByType(station.type); 
