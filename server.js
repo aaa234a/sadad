@@ -132,13 +132,10 @@ async function getAddressFromCoords(lat, lng) {
             // 優先度: 道路名/ランドマーク > 町名 > 市区町村名
             const address = data.address;
             
-            // ランドマークや道路名（最も具体的な地名）
-            if (address.leisure) return address.leisure;
-            if (address.building) return address.building;
+
             
             // 町名・区名
-            if (address.neighbourhood) return address.neighbourhood;
-            if (address.suburb) return address.suburb;
+
             if (address.city_district) return address.city_district;
             if (address.town) return address.town;
             if (address.village) return address.village;
