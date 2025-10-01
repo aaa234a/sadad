@@ -669,6 +669,12 @@
         const existingTrainIds = new Set(Object.keys(Game.allTrainMarkers));
 
         trainPositions.forEach((train) => {
+          // ★ 修正: train.latlng の存在チェックを追加
+          if (!train.latlng || typeof train.latlng.lat === 'undefined' || typeof train.latlng.lng === 'undefined') {
+              console.warn(`列車ID ${train.id} の位置情報が不正です:`, train.latlng);
+              return; // 不正なデータはスキップ
+          }
+
           const latlng = L.latLng(train.latlng.lat, train.latlng.lng);
           existingTrainIds.delete(train.id.toString());
 
@@ -718,7 +724,9 @@
         existingTrainIds.forEach(trainId => {
             const markerData = Game.allTrainMarkers[trainId];
             if (markerData.original) map.removeLayer(markerData.original);
-            markerData.copies.forEach(copy => map.removeLayer(copy));
+            markerData.copies.forEach(copy => {
+                if (copy) map.removeLayer(copy); // copyがnullでないかチェック
+            });
             delete Game.allTrainMarkers[trainId];
         });
       }
@@ -849,6 +857,9 @@
           // polylines は [Polyline(-360), Polyline(0), Polyline(+360)] の配列
           
           polylines.forEach(polyline => {
+              // polylineがnullでないことを確認
+              if (!polyline) return;
+
               const latlngs = polyline.getLatLngs();
               latlngs.forEach((latlng) => {
                   const dist = e.latlng.distanceTo(latlng);
