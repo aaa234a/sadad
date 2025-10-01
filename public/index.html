@@ -669,13 +669,14 @@
         const existingTrainIds = new Set(Object.keys(Game.allTrainMarkers));
 
         trainPositions.forEach((train) => {
-          // ★ 修正: train.latlng の存在チェックを追加
-          if (!train.latlng || typeof train.latlng.lat === 'undefined' || typeof train.latlng.lng === 'undefined') {
+          // ★ 修正: train.latlng が配列であり、長さが2であることをチェック
+          if (!Array.isArray(train.latlng) || train.latlng.length !== 2) {
               console.warn(`列車ID ${train.id} の位置情報が不正です:`, train.latlng);
               return; // 不正なデータはスキップ
           }
 
-          const latlng = L.latLng(train.latlng.lat, train.latlng.lng);
+          // 修正: 配列のインデックス [0] (緯度) と [1] (経度) を使用
+          const latlng = L.latLng(train.latlng[0], train.latlng[1]);
           existingTrainIds.delete(train.id.toString());
 
           if (!Game.allTrainMarkers[train.id]) {
@@ -694,6 +695,7 @@
           const popupContent = `列車 #${train.id} (Owner: ${train.owner})`;
 
           longitudeOffsets.forEach((offset, index) => {
+            // 経度オフセットを適用
             const offsetLatLng = L.latLng(latlng.lat, latlng.lng + offset);
             let marker;
 
@@ -1053,6 +1055,7 @@
         L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
           attribution: "© OpenStreetMap contributors (Base)",
           maxZoom: 19,
+          minzoom: 2,
         }).addTo(map);
         L.tileLayer(
           "https://cyberjapandata.gsi.go.jp/xyz/dem5a_color/{z}/{x}/{y}.png",
