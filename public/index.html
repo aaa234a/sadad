@@ -314,7 +314,7 @@
     <div id="error-message" style="display: none"></div>
     <div id="info-message" style="display: none"></div>
 
-    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@turf/turf@6/turf.min.js"></script>
     <script src="/socket.io/socket.io.js"></script>
 
@@ -415,7 +415,8 @@
                 map,
                 s.ownerId,
                 s.type, 
-                s.capacity 
+                s.capacity,
+                s.name // ★変更: 駅名を追加
               )
           );
         },
@@ -463,11 +464,12 @@
       let lineCandidateNodes = [];
 
       class Station {
-        constructor(id, latlng, map, ownerId, type = 'Small', capacity = 3) {
+        // ★変更: name引数を追加
+        constructor(id, latlng, map, ownerId, type = 'Small', capacity = 3, name) {
           this.id = id;
           this.latlng = latlng;
           this.ownerId = ownerId;
-          this.name = `駅 ${id}`;
+          this.name = name; // ★変更: 駅名を設定
           this.type = type; 
           this.capacity = capacity; 
           this.markers = []; 
@@ -487,7 +489,7 @@
             const offsetLatLng = L.latLng(latlng.lat, latlng.lng + offset);
             const marker = L.marker(offsetLatLng, {
               icon: stationIcon,
-              title: this.name,
+              title: this.name, // ★変更: タイトルに駅名を使用
             }).addTo(map);
 
             marker.bindPopup(popupContent);
@@ -521,6 +523,12 @@
                 popupContent += `<hr>
                   <button onclick="upgradeStation(${this.id}, 'Medium')" ${isMedium || isLarge ? 'disabled' : ''} style="width: 100%; margin-bottom: 5px;">中規模にアップグレード (¥50M)</button>
                   <button onclick="upgradeStation(${this.id}, 'Large')" ${isLarge ? 'disabled' : ''} style="width: 100%;">大規模にアップグレード (${isMedium ? '¥100M' : '¥150M'})</button>`;
+                
+                // ★追加: リネームUI
+                popupContent += `<hr>
+                  <label for="rename-input-${this.id}">駅名変更:</label>
+                  <input type="text" id="rename-input-${this.id}" value="${this.name}" maxlength="20" style="width: 100%; margin: 5px 0;">
+                  <button onclick="renameStationClient(${this.id})" style="width: 100%;">駅名を変更</button>`;
             }
             return popupContent;
         }
@@ -529,6 +537,7 @@
             const newContent = this.generatePopupContent();
             this.markers.forEach(marker => {
                 marker.bindPopup(newContent);
+                marker.setTitle(this.name); // ★変更: タイトルも更新
             });
         }
       }
@@ -622,7 +631,8 @@
         });
 
         socket.on("stationBuilt", (data) => {
-          new Station(data.id, data.latlng, map, data.ownerId, data.type, data.capacity);
+          // ★変更: 駅名(data.name)を渡す
+          new Station(data.id, data.latlng, map, data.ownerId, data.type, data.capacity, data.name); 
           Game.updateGlobalStats({ globalStats: { stationsCount: Game.stations.length } });
         });
         
@@ -633,6 +643,15 @@
               station.capacity = data.capacity;
               station.updatePopup();
           }
+        });
+        
+        // ★追加: 駅名変更イベントハンドラ
+        socket.on("stationRenamed", (data) => {
+            const station = Game.stations.find(s => s.id === data.id);
+            if (station) {
+                station.name = data.newName;
+                station.updatePopup();
+            }
         });
 
         socket.on("lineBuilt", (data) => {
@@ -779,8 +798,8 @@
         if (
           confirm(
             `駅 ${
-              station.id
-            } を解体しますか？ (費用: ¥${dismantleCost.toLocaleString()})`
+              station.name
+            } (ID: ${station.id}) を解体しますか？ (費用: ¥${dismantleCost.toLocaleString()})`
           )
         ) {
           socket.emit("dismantleStation", { stationId: station.id });
@@ -872,6 +891,21 @@
             socket.emit("upgradeStation", { stationId: stationId, newType: newType, cost: cost });
         }
       };
+      
+      // ★追加: 駅名リネームクライアント関数
+      window.renameStationClient = (stationId) => {
+        if (!socket) return alert("サーバーに接続されていません。");
+        
+        const input = document.getElementById(`rename-input-${stationId}`);
+        const newName = input ? input.value.trim() : null;
+        
+        if (!newName || newName.length < 2 || newName.length > 20) {
+            return alert("駅名は2文字以上20文字以内で入力してください。");
+        }
+
+        socket.emit("renameStation", { stationId: stationId, newName: newName });
+      };
+
 
       function handleLineDismantle(e) {
         if (Game.mode !== "dismantle-line" || !socket) return;
