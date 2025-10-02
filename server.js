@@ -502,29 +502,7 @@ class ServerVehicle {
         
         revenue = Math.round(revenue);
         
-        if (ServerGame.users[this.ownerId]) {
-            const user = ServerGame.users[this.ownerId];
-            user.money += revenue;
-            user.moneyUpdated = true; 
-            
-            // 4. 収益ログの記録
-            const log = await RevenueLogModel.create({
-                userId: this.ownerId,
-                type: 'revenue',
-                amount: revenue,
-                message: `${this.data.name} #${this.id} が ${station.name} に到着`,
-            });
-            
-            // ログをクライアントに送信
-            if (user.socketId) {
-                io.to(user.socketId).emit('revenueLog', {
-                    type: 'revenue',
-                    amount: revenue,
-                    vehicleName: this.data.name,
-                    stationName: station.name
-                });
-            }
-        }
+        
     }
 }
 class ServerLineManager {
