@@ -6,9 +6,8 @@ const cookieParser = require('cookie-parser');
 const path = require('path');
 const turf = require('@turf/turf'); 
 const mongoose = require('mongoose');
+const geolib = require('geolib'); 
 const axios = require('axios'); 
-const { fromUrl } = require('geotiff'); // ★ GeoTIFFライブラリ
-const proj4 = require('proj4'); // ★ 座標変換ライブラリ
 require('dotenv').config();
 
 const app = express();
@@ -97,6 +96,7 @@ const VehicleSchema = new mongoose.Schema({
 }, { collection: 'vehicles' });
 const VehicleModel = mongoose.model('Vehicle', VehicleSchema);
 
+// ★追加: チャットスキーマ
 const ChatSchema = new mongoose.Schema({
     userId: { type: String, required: true },
     message: { type: String, required: true },
@@ -122,183 +122,134 @@ const VehicleData = {
     TRAM: { name: "路面電車", maxSpeedKmH: 50, capacity: 150, maintenanceCostPerKm: 100, type: 'passenger', color: '#808080', purchaseMultiplier: 0.5 }, 
 };
 
-// =================================================================
-// ★ GeoTIFF人口データ処理ロジック
-// =================================================================
-const WORLDPOP_URL = 'https://drive.usercontent.google.com/download?id=1RXhkeCoPf5gDpz7kO40wn4x4646sXNqq&export=download&authuser=0&confirm=t&uuid=ad389895-3ad2-4345-a5b8-fdfc6a2bcdd6&at=AKSUxGN0g5r6LpggqZbcglzOt8PN:1759388822962';
-let tiffImage = null;
-let geoKeyDirectory = null;
-let pixelScale = null;
-
-// EPSG:3857 (Web Mercator) から EPSG:4326 (WGS84: 緯度経度) への変換を定義
-// GeoTIFFがEPSG:3857の場合に必要
-const projection = proj4('EPSG:3857', 'EPSG:4326');
-
-async function loadPopulationTiff() {
-    try {
-        console.log(`GeoTIFFを外部URLからロード中: ${WORLDPOP_URL}`);
-
-        const tiff = await fromUrl(WORLDPOP_URL);
-        tiffImage = await tiff.getImage(0);
-
-        const geoKeys = tiffImage.getGeoKeys();
-        geoKeyDirectory = geoKeys.GeoKeyDirectory;
-
-        pixelScale = tiffImage.getFileDirectory().ModelPixelScale;
-
-        console.log(`GeoTIFFロード完了。サイズ: ${tiffImage.getWidth()}x${tiffImage.getHeight()}`);
-        console.log(`GeoTIFFのCRSはEPSG:${geoKeyDirectory?.GTModelTypeGeoKey || '4326 (WGS84想定)'}を想定`);
-
-    } catch (error) {
-        console.error(
-            "GeoTIFFのロード中にエラーが発生しました。人口需要はデフォルト値を使用します。",
-            error.message
-        );
-        tiffImage = null;
-    }
-}
-
-
-/**
- * 緯度・経度からGeoTIFFの人口密度を取得
- * @param {number} lat 緯度 (WGS84)
- * @param {number} lng 経度 (WGS84)
- * @returns {number} 人口密度 (人/km²)
- */
-async function getPopulationDensityFromCoords(lat, lng) {
-    if (!tiffImage) return 50; // ロード失敗時のデフォルト値
-
-    try {
-        let x, y;
-        const crs = geoKeyDirectory?.GTModelTypeGeoKey;
-
-        // 投影座標系なら変換、そうでなければ WGS84
-        if (crs === 1) {
-            const epsg = geoKeyDirectory?.ProjectedCSTypeGeoKey || 3857;
-            [x, y] = proj4('EPSG:4326', `EPSG:${epsg}`, [lng, lat]);
-        } else {
-            x = lng;
-            y = lat;
-        }
-
-        // 原点と解像度を取得
-        const [originX, originY] = tiffImage.getOrigin();
-        const [resX, resY] = tiffImage.getResolution();
-
-        // ピクセル座標に変換
-        const px = Math.floor((x - originX) / resX);
-        const py = Math.floor((originY - y) / resY);
-
-        // 範囲チェック
-        if (px < 0 || px >= tiffImage.getWidth() || py < 0 || py >= tiffImage.getHeight()) {
-            return 50; // 範囲外
-        }
-
-        // ピクセル値を読み込み
-        const rasters = await tiffImage.readRasters({ window: [px, py, px + 1, py + 1] });
-
-        if (rasters && rasters.length > 0 && rasters[0].length > 0) {
-            const population = rasters[0][0];
-            return Math.max(1, Math.round(population));
-        }
-
-        return 50;
-    } catch (error) {
-        console.error("GeoTIFFからの人口密度取得中にエラー:", error.message);
-        return 50;
-    }
-}
-// =================================================================
-// ★ 人口密度に基づいた需要計算関数
-// =================================================================
-/**
- * 人口密度に基づいた需要を計算する
- * @param {number} populationDensity 人口密度 (人/km²)
- * @returns {{passenger: number, freight: number}} 月間需要
- */
-function calculateDemandFromPopulationDensity(populationDensity) {
-    // 旅客需要: 人口密度 (人/km²) を基に、駅の月間需要を計算
-    // 1km²あたりの人口密度から、駅の商圏（例: 2km²）の人口を推定し、そのうちの一定割合（例: 1%）が月間利用すると仮定
-    const catchmentAreaKm2 = 2;
-    const monthlyUseRate = 0.01;
-    
-    let localPopulation = populationDensity * catchmentAreaKm2;
-    
-    // 旅客需要: 推定人口 * 月間利用率 * ランダム性
-    const passengerBase = Math.round(localPopulation * monthlyUseRate * (0.8 + Math.random() * 0.4)); // 0.8～1.2倍のランダム性
-    
-    // 貨物需要: 旅客需要の約1/10 (地域産業の規模を反映)
-    const freightBase = Math.round(passengerBase * 0.1 * (0.8 + Math.random() * 0.4));
-    
-    // 最低需要を保証
-    const passengerDemand = Math.max(50, passengerBase);
-    const freightDemand = Math.max(10, freightBase);
-    
-    return {
-        passenger: passengerDemand,
-        freight: freightDemand,
-    };
-}
-
-
-// ★修正: Nominatim APIからの地名取得関数 (市区町村名も取得)
+// ★修正: Nominatim APIからの地名取得関数 (axios使用)
 async function getAddressFromCoords(lat, lng) {
     // OpenStreetMap Nominatim API (逆ジオコーディング)
     const url = `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lng}&format=json&accept-language=ja&zoom=16`;
     
+    // Nominatimは利用規約により、高い負荷をかけないよう注意が必要です
+    // 適切なUser-Agentを設定することが推奨されています
     try {
         const response = await axios.get(url, {
-            headers: { "User-Agent": "RailwayTycoonGameServer/1.0 (Contact: your-email@example.com)" } 
+            headers: { "User-Agent": "RailwayTycoonGameServer/1.0 (Contact: your-email@example.com)" } // 適切なUser-Agentを設定
         });
         
         const data = response.data;
         
         if (data.address) {
+            // 日本語の地名を取得するロジック
+            // 優先度: 道路名/ランドマーク > 町名 > 市区町村名
             const address = data.address;
             
-            // 優先度の高い地名を取得 (駅名生成用)
-            let stationNameCandidate;
-            if (address.neighbourhood) stationNameCandidate = address.neighbourhood;
-            else if (address.suburb) stationNameCandidate = address.suburb;
-            else if (address.city_district) stationNameCandidate = address.city_district;
-            else if (address.town) stationNameCandidate = address.town;
-            else if (address.village) stationNameCandidate = address.village;
-            else if (address.city) stationNameCandidate = address.city;
-            else if (address.county) stationNameCandidate = address.county;
-            else stationNameCandidate = data.display_name.split(',')[0].trim();
 
-            return {
-                stationNameCandidate: stationNameCandidate,
-            };
+            
+            // 町名・区名
+            if (address.neighbourhood) return address.neighbourhood;
+            if (address.suburb) return address.suburb;
+            if (address.city_district) return address.city_district;
+            if (address.town) return address.town;
+            if (address.village) return address.village;
+            
+            // 市区町村名
+            if (address.city) return address.city;
+            if (address.county) return address.county;
+            
+            // 最終フォールバック
+            return data.display_name.split(',')[0].trim();
         }
         return null;
     } catch (error) {
         console.error("Error fetching address from Nominatim:", error.message);
-        return { stationNameCandidate: null };
+        // Nominatimが失敗した場合のフォールバックとして、geolibと静的データセットを使用
+        return getAddressFromCoordsFallback(lat, lng); 
     }
+}
+
+// ★追加: Nominatim失敗時のフォールバック用（geolib + 静的データセット）
+const JAPAN_LANDMARKS = [
+    { name: "東京", lat: 35.681236, lng: 139.767125 },
+    { name: "大阪", lat: 34.702485, lng: 135.495952 },
+    { name: "名古屋", lat: 35.170915, lng: 136.881537 },
+    { name: "博多", lat: 33.590355, lng: 130.420658 },
+    { name: "札幌", lat: 43.068611, lng: 141.350833 },
+    { name: "横浜", lat: 35.465833, lng: 139.622778 },
+    { name: "仙台", lat: 38.260000, lng: 140.870000 },
+    { name: "広島", lat: 34.396389, lng: 132.459444 },
+    { name: "京都", lat: 35.001111, lng: 135.768333 },
+    { name: "神戸", lat: 34.690000, lng: 135.195556 },
+    { name: "千葉", lat: 35.604722, lng: 140.123333 },
+    { name: "大宮", lat: 35.906944, lng: 139.623056 },
+    { name: "新宿", lat: 35.689722, lng: 139.700556 },
+    { name: "渋谷", lat: 35.658056, lng: 139.701667 },
+    { name: "池袋", lat: 35.729722, lng: 139.710833 },
+    { name: "天王寺", lat: 34.646944, lng: 135.508611 },
+    { name: "新大阪", lat: 34.733333, lng: 135.500000 },
+    { name: "豊洲", lat: 35.657778, lng: 139.794444 },
+    { name: "お台場", lat: 35.626111, lng: 139.779722 },
+    { name: "羽田", lat: 35.549444, lng: 139.779722 },
+    { name: "三鷹", lat: 35.698333, lng: 139.558333 },
+    { name: "立川", lat: 35.701944, lng: 139.413333 },
+    { name: "八王子", lat: 35.658333, lng: 139.338333 },
+    { name: "浦和", lat: 35.868333, lng: 139.658333 },
+    { name: "船橋", lat: 35.696389, lng: 139.986389 },
+    { name: "川崎", lat: 35.530556, lng: 139.702222 },
+    { name: "熱海", lat: 35.101389, lng: 139.076944 },
+    { name: "静岡", lat: 34.972222, lng: 138.384444 },
+    { name: "浜松", lat: 34.708333, lng: 137.733333 },
+    { name: "金沢", lat: 36.577778, lng: 136.648333 },
+    { name: "新潟", lat: 37.916667, lng: 139.049444 },
+    { name: "岡山", lat: 34.661667, lng: 133.918333 },
+    { name: "高松", lat: 34.340278, lng: 134.046944 },
+    { name: "松山", lat: 33.841667, lng: 132.766667 },
+    { name: "長崎", lat: 32.750000, lng: 129.873056 },
+    { name: "熊本", lat: 32.789167, lng: 130.741667 },
+    { name: "那覇", lat: 26.216667, lng: 127.683333 },
+];
+
+function getAddressFromCoordsFallback(lat, lng) {
+    const targetCoord = { latitude: lat, longitude: lng };
+    
+    const nearest = geolib.findNearest(targetCoord, JAPAN_LANDMARKS.map(item => ({
+        latitude: item.lat,
+        longitude: item.lng,
+        name: item.name
+    })));
+    
+    if (nearest) {
+        const originalIndex = parseInt(nearest.key, 10);
+        return JAPAN_LANDMARKS[originalIndex].name;
+    }
+    
+    return null;
 }
 
 // ★修正: 駅名生成ロジックを非同期に戻し、Nominatimを使用
 async function generateRegionalStationName(lat, lng) {
-    const addressData = await getAddressFromCoords(lat, lng);
+    const regionalName = await getAddressFromCoords(lat, lng);
     
-    if (addressData && addressData.stationNameCandidate) {
-        let regionalName = addressData.stationNameCandidate;
-        
+    // 1. Nominatimまたはフォールバックから地名が取得できた場合
+    if (regionalName) {
+        // 取得した地名に「駅」を合成
+        // 例: 「東京都江東区豊洲四丁目」 -> 「豊洲駅」
+        // 地名から不要な部分（「通り」「公園」「〇丁目」など）を削除し、簡潔な駅名にする
+        // ★修正点: [一二三四五六七八九十]丁目 を追加
         let baseName = regionalName.replace(/通り|公園|広場|交差点|ビル|マンション|アパート|[一二三四五六七八九十]丁目|番地|日本|Japan/g, '').trim();
         
         if (baseName.endsWith("駅")) {
+            // 既に「駅」で終わっている場合はそのまま
             return baseName;
         }
         
+        // 地名が長すぎる場合は短縮
         if (baseName.length > 10) {
             baseName = baseName.substring(0, 10);
         }
         
+        // 最後に「駅」を付与
         return `${baseName}駅`;
     }
     
-    // 最終フォールバック
+    // 2. 最終フォールバック (Nominatimもgeolibフォールバックも失敗した場合)
     const randomAreas = ["新興", "郊外", "住宅", "公園", "中央", "東", "西", "南", "北"];
     const randomSuffixes = ["台", "丘", "本", "前", "野", "ヶ原"];
     const area = randomAreas[Math.floor(Math.random() * randomAreas.length)];
@@ -307,13 +258,6 @@ async function generateRegionalStationName(lat, lng) {
     return `${area}${suffix}駅`;
 }
 
-
-// ... (省略: getElevation, getDistanceKm, calculateConstructionCost)
-function getDistanceKm(coord1, coord2) {
-    const lngLat1 = [coord1[1], coord1[0]];
-    const lngLat2 = [coord2[1], coord2[0]];
-    return turf.distance(turf.point(lngLat1), turf.point(lngLat2), {units: 'kilometers'});
-}
 function getElevation(lat, lng) {
     const TOKYO_BAY_LAT = 35.6;
     const TOKYO_BAY_LNG = 139.7;
@@ -322,6 +266,11 @@ function getElevation(lat, lng) {
     if (lng < 139.7) { elevation += 10 + (139.7 - lng) * 50; }
     if (lat < 35.6) { elevation += 10 + (35.6 - lat) * 50; }
     return Math.round(Math.min(3000, Math.max(0, elevation)));
+}
+function getDistanceKm(coord1, coord2) {
+    const lngLat1 = [coord1[1], coord1[0]];
+    const lngLat2 = [coord2[1], coord2[0]];
+    return turf.distance(turf.point(lngLat1), turf.point(lngLat2), {units: 'kilometers'});
 }
 function calculateConstructionCost(coord1, coord2, trackType) {
     const distanceKm = getDistanceKm(coord1, coord2);
@@ -347,17 +296,18 @@ function calculateConstructionCost(coord1, coord2, trackType) {
     const totalCost = baseCost + slopeCost + highElevationCost;
     return { cost: Math.round(totalCost), lengthKm: distanceKm };
 }
-
 // =================================================================
-// B. サーバーサイド・クラス定義 (変更なし)
+// B. サーバーサイド・クラス定義
 // =================================================================
 class ServerStation {
-    // ... (前回のコードと同じ)
+    // ★変更: demandを引数に追加
     constructor(id, latlng, ownerId, type = 'Small', initialName = null, initialDemand = null) {
         this.id = id;
         this.latlng = latlng;
         this.ownerId = ownerId;
+        // DBからロードされた名前、または仮の名前を設定
         this.name = initialName || `仮駅名 ${id}`; 
+        // ★変更: demandを初期化
         this.demand = initialDemand || { 
             passenger: Math.round(50 + Math.random() * 300),
             freight: Math.round(10 + Math.random() * 100)
@@ -386,7 +336,6 @@ class ServerStation {
     get lng() { return this.latlng[1]; }
 }
 class ServerVehicle {
-    // ... (前回のコードと同じ)
     constructor(id, line, data) {
         this.id = id;
         this.lineId = line.id;
@@ -572,7 +521,6 @@ class ServerVehicle {
     }
 }
 class ServerLineManager {
-    // ... (前回のコードと同じ)
     constructor(id, ownerId, stations, coords, cost, lengthKm, color, trackType) {
         this.id = id;
         this.ownerId = ownerId;
@@ -724,6 +672,7 @@ async function loadUserData(userId) {
     return user;
 }
 
+// ★変更: 駅名リネーム関数 (変更なし、再掲)
 async function renameStation(userId, stationId, newName) {
     const user = ServerGame.users[userId];
     if (!user) return { success: false, message: "ユーザーが見つかりません。" };
@@ -753,7 +702,7 @@ async function renameStation(userId, stationId, newName) {
 
 
 // =================================================================
-// C-2. ゲームロジック関数 (変更なし)
+// C-2. ゲームロジック関数
 // =================================================================
 async function calculateMonthlyMaintenance() {
     let totalCost = 0;
@@ -1040,7 +989,7 @@ io.on('connection', (socket) => {
             allLines: allClientLines, 
             vehicles: userState.vehicles.map(v => ({ id: v.id, data: v.data })), 
             stations: ServerGame.globalStats.stations.map(s => ({ 
-                id: s.id, latlng: [s.lat, s.lng], ownerId: s.ownerId, type: s.type, capacity: s.capacity, name: s.name, demand: s.demand 
+                id: s.id, latlng: [s.lat, s.lng], ownerId: s.ownerId, type: s.type, capacity: s.capacity, name: s.name, demand: s.demand // ★変更: demandを追加
             })), 
             vehicleData: ServerGame.VehicleData,
         });
@@ -1088,14 +1037,10 @@ io.on('connection', (socket) => {
             const stationId = ServerGame.globalStats.nextStationId++;
             await saveGlobalStats();
             
-            // ★変更: 駅名と人口エリアを非同期で取得
+            // ★変更: 駅名を非同期で生成 (Nominatimを使用)
             const newStationName = await generateRegionalStationName(latlng[0], latlng[1]);
             
-            // ★変更: GeoTIFFから人口密度を取得し、需要を計算
-            const populationDensity = await getPopulationDensityFromCoords(latlng[0], latlng[1]);
-            const calculatedDemand = calculateDemandFromPopulationDensity(populationDensity);
-            
-            const newStation = new ServerStation(stationId, latlng, userId, 'Small', newStationName, calculatedDemand); 
+            const newStation = new ServerStation(stationId, latlng, userId, 'Small', newStationName); 
             
             await StationModel.create({
                 id: newStation.id,
@@ -1103,7 +1048,7 @@ io.on('connection', (socket) => {
                 lat: latlng[0],
                 lng: latlng[1],
                 name: newStation.name, 
-                demand: newStation.demand, // ★変更: 計算された需要を保存
+                demand: newStation.demand,
                 lineConnections: newStation.lineConnections,
                 type: newStation.type, 
                 capacity: newStation.capacity 
@@ -1364,11 +1309,14 @@ async function loadGlobalStats() {
 
     const stationsRes = await StationModel.find({}).lean();
     ServerGame.globalStats.stations = stationsRes.map(row => {
+        // ★変更: 既存の駅の命名規則をチェックし、古い名前であれば仮の名前を設定
         let stationName = row.name;
         if (!stationName || stationName.startsWith("駅 ") || stationName.includes("新駅") || stationName.includes("仮駅名")) { 
+             // 既存の駅名は変更しないが、仮の名前の場合はDBからロードされた名前を優先
              stationName = row.name || `仮駅名 ${row.id}`;
         }
         
+        // ★変更: demandを渡す
         const station = new ServerStation(
             row.id, 
             [row.lat, row.lng], 
@@ -1383,21 +1331,15 @@ async function loadGlobalStats() {
         return station;
     });
     
-    // ★変更: 既存の仮駅名を持つ駅に対して、非同期で地名を取得し更新
+    // ★変更: 既存の仮駅名を持つ駅に対して、非同期で地名を取得し更新 (Nominatimを使用)
     const updatePromises = ServerGame.globalStats.stations
         .filter(s => s.name.startsWith("仮駅名"))
         .map(async (station) => {
             const newName = await generateRegionalStationName(station.lat, station.lng);
-            
-            // GeoTIFFから人口密度を取得し、需要を再計算
-            const populationDensity = await getPopulationDensityFromCoords(station.lat, station.lng);
-            const newDemand = calculateDemandFromPopulationDensity(populationDensity);
-            
-            if (newName !== station.name || JSON.stringify(newDemand) !== JSON.stringify(station.demand)) {
+            if (newName !== station.name) {
                 station.name = newName;
-                station.demand = newDemand;
-                await StationModel.updateOne({ id: station.id }, { $set: { name: newName, demand: newDemand } });
-                console.log(`既存の仮駅名 ${station.id} を ${newName} に更新し、需要を再計算しました。`);
+                await StationModel.updateOne({ id: station.id }, { $set: { name: newName } });
+                console.log(`既存の仮駅名 ${station.id} を ${newName} に更新しました。`);
             }
         });
     
@@ -1421,7 +1363,6 @@ async function startServer() {
     try {
         await connectDB();
         await initializeDatabase();
-        await loadPopulationTiff(); // ★ GeoTIFFのロード
         await loadGlobalStats();
         
         setInterval(serverSimulationLoop, 100); 
