@@ -137,29 +137,30 @@ const projection = proj4('EPSG:3857', 'EPSG:4326');
 async function loadPopulationTiff() {
     try {
         console.log(`GeoTIFFを外部URLからロード中: ${WORLDPOP_URL}`);
-        
-        // GeoTIFF をロード
+
         const tiff = await fromUrl(WORLDPOP_URL);
         tiffImage = await tiff.getImage(0);
-        
-        // GeoKeysを取得
+
         const geoKeys = tiffImage.getGeoKeys();
         geoKeyDirectory = geoKeys.GeoKeyDirectory;
-        
-        // ピクセルと地理座標のスケール
+
         pixelScale = tiffImage.getFileDirectory().ModelPixelScale;
 
         console.log(`GeoTIFFロード完了。サイズ: ${tiffImage.getWidth()}x${tiffImage.getHeight()}`);
-        console.log(`GeoTIFFのCRSはEPSG:${geoKeyDirectory?.GTModelTypeGeoKey || '不明'}を想定`);
+        console.log(`GeoTIFFのCRSはEPSG:${geoKeyDirectory?.GTModelTypeGeoKey || '4326 (WGS84想定)'}を想定`);
 
     } catch (error) {
-        console.error("GeoTIFFのロード中にエラーが発生しました。人口需要はデフォルト値を使用します。", error.message);
+        console.error(
+            "GeoTIFFのロード中にエラーが発生しました。人口需要はデフォルト値を使用します。",
+            error.message
+        );
         tiffImage = null;
     }
 }
 
+
 /**
- * 緯度・経度からGeoTIFFの人口密度を取得する
+ * 緯度・経度からGeoTIFFの人口密度を取得
  * @param {number} lat 緯度 (WGS84)
  * @param {number} lng 経度 (WGS84)
  * @returns {number} 人口密度 (人/km²)
@@ -169,49 +170,44 @@ async function getPopulationDensityFromCoords(lat, lng) {
 
     try {
         let x, y;
-
-        // CRS 判定（安全に optional chaining）
         const crs = geoKeyDirectory?.GTModelTypeGeoKey;
 
+        // 投影座標系なら変換、そうでなければ WGS84
         if (crs === 1) {
-            // 投影座標系なら EPSGコードを取得（なければ 3857 デフォルト）
             const epsg = geoKeyDirectory?.ProjectedCSTypeGeoKey || 3857;
             [x, y] = proj4('EPSG:4326', `EPSG:${epsg}`, [lng, lat]);
         } else {
-            // 地理座標系（WGS84）はそのまま
             x = lng;
             y = lat;
         }
 
-        // GeoTIFF の原点と解像度を取得
+        // 原点と解像度を取得
         const [originX, originY] = tiffImage.getOrigin();
         const [resX, resY] = tiffImage.getResolution();
 
         // ピクセル座標に変換
         const px = Math.floor((x - originX) / resX);
-        const py = Math.floor((originY - y) / resY); // Y軸反転に注意
+        const py = Math.floor((originY - y) / resY);
 
         // 範囲チェック
         if (px < 0 || px >= tiffImage.getWidth() || py < 0 || py >= tiffImage.getHeight()) {
-            return 50; // 範囲外は低人口密度
+            return 50; // 範囲外
         }
 
-        // ピクセル値を取得
+        // ピクセル値を読み込み
         const rasters = await tiffImage.readRasters({ window: [px, py, px + 1, py + 1] });
-        
+
         if (rasters && rasters.length > 0 && rasters[0].length > 0) {
             const population = rasters[0][0];
-            return Math.max(1, Math.round(population)); // 1以上に丸める
+            return Math.max(1, Math.round(population));
         }
 
         return 50;
-
     } catch (error) {
         console.error("GeoTIFFからの人口密度取得中にエラー:", error.message);
         return 50;
     }
 }
-
 // =================================================================
 // ★ 人口密度に基づいた需要計算関数
 // =================================================================
