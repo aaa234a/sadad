@@ -125,7 +125,7 @@ const VehicleData = {
     TRAM: { name: "路面電車", maxSpeedKmH: 50, capacity: 150, maintenanceCostPerKm: 100, type: 'passenger', color: '#808080', purchaseMultiplier: 0.5 }, 
 };
 
-// ★修正: Nominatim APIからの地名取得関数 (変更なし、再掲)
+// Nominatim APIからの地名取得関数
 async function getAddressFromCoords(lat, lng) {
     const url = `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lng}&format=json&accept-language=ja&zoom=16`;
     try {
@@ -156,7 +156,7 @@ async function getAddressFromCoords(lat, lng) {
     }
 }
 
-// ★追加: Nominatim失敗時のフォールバック用（geolib + 静的データセット）(変更なし、再掲)
+// Nominatim失敗時のフォールバック用（geolib + 静的データセット）
 const JAPAN_LANDMARKS = [
     { name: "東京", lat: 35.681236, lng: 139.767125 },
     { name: "大阪", lat: 34.702485, lng: 135.495952 },
@@ -214,7 +214,7 @@ function getAddressFromCoordsFallback(lat, lng) {
     return null;
 }
 
-// ★修正: 駅名生成ロジック (変更なし、再掲)
+// 駅名生成ロジック
 async function generateRegionalStationName(lat, lng) {
     const regionalName = await getAddressFromCoords(lat, lng);
     
@@ -254,7 +254,7 @@ function getDistanceKm(coord1, coord2) {
     const lngLat2 = [coord2[1], coord2[0]];
     return turf.distance(turf.point(lngLat1), turf.point(lngLat2), {units: 'kilometers'});
 }
-// ★修正: 建設コスト計算ロジック (変更なし、再掲)
+// 建設コスト計算ロジック
 function calculateConstructionCost(coord1, coord2, trackType) {
     const distanceKm = getDistanceKm(coord1, coord2);
     if (distanceKm === 0) return { cost: 0, lengthKm: 0 };
@@ -298,7 +298,6 @@ function calculateConstructionCost(coord1, coord2, trackType) {
 // B. サーバーサイド・クラス定義
 // =================================================================
 class ServerStation {
-    // ... (省略: ServerStationロジックは変更なし)
     constructor(id, latlng, ownerId, type = 'Small', initialName = null, demand = null) {
         this.id = id;
         this.latlng = latlng;
@@ -332,7 +331,6 @@ class ServerStation {
     get lng() { return this.latlng[1]; }
 }
 class ServerVehicle {
-    // ... (省略: ServerVehicleロジックは変更なし)
     constructor(id, line, data, status = 'Running') { 
         this.id = id;
         this.lineId = line ? line.id : null; 
@@ -554,7 +552,6 @@ class ServerVehicle {
     }
 }
 class ServerLineManager {
-    // ... (省略: ServerLineManagerロジックは変更なし)
     constructor(id, ownerId, stations, coords, cost, lengthKm, color, trackType) {
         this.id = id;
         this.ownerId = ownerId;
@@ -636,7 +633,6 @@ const ServerGame = {
 // C-1. DB操作関数 (Mongoose)
 // =================================================================
 async function saveGlobalStats() {
-    // ... (省略: saveGlobalStatsロジックは変更なし)
     const stats = ServerGame.globalStats;
     await GlobalStatsModel.updateOne({ _id: 1 }, {
         $set: {
@@ -650,7 +646,6 @@ async function saveGlobalStats() {
 }
 
 async function saveUserFinancials(userId, money, totalConstructionCost) {
-    // ... (省略: saveUserFinancialsロジックは変更なし)
     await UserModel.updateOne({ userId: userId }, {
         $set: {
             money: money,
@@ -713,9 +708,8 @@ async function loadUserData(userId) {
     return user;
 }
 
-// ★修正: 駅名リネーム関数 (変更なし、再掲)
+// 駅名リネーム関数
 async function renameStation(userId, stationId, newName) {
-    // ... (省略: renameStationロジックは変更なし)
     const user = ServerGame.users[userId];
     if (!user) return { success: false, message: "ユーザーが見つかりません。" };
     
@@ -747,7 +741,6 @@ async function renameStation(userId, stationId, newName) {
 // C-2. ゲームロジック関数
 // =================================================================
 async function calculateMonthlyMaintenance() {
-    // ... (省略: calculateMonthlyMaintenanceロジックは変更なし)
     let totalCost = 0;
     
     for (const user of Object.values(ServerGame.users)) {
@@ -786,7 +779,6 @@ async function calculateMonthlyMaintenance() {
 }
 
 async function calculateRanking() {
-    // ... (省略: calculateRankingロジックは変更なし)
     const allUsers = await UserModel.find({}).lean();
     
     const rankingPromises = allUsers.map(async (user) => {
@@ -808,7 +800,7 @@ async function calculateRanking() {
         .slice(0, 10);
 }
 
-// ★追加: 車両売却ロジック (変更なし、再掲)
+// 車両売却ロジック
 async function sellVehicle(userId, vehicleId) {
     const user = ServerGame.users[userId];
     if (!user) return { success: false, message: "ユーザーが見つかりません。" };
@@ -840,7 +832,7 @@ async function sellVehicle(userId, vehicleId) {
     };
 }
 
-// ★追加: 車両の路線からの撤去ロジック (変更なし、再掲)
+// 車両の路線からの撤去ロジック
 async function removeVehicleFromLine(userId, vehicleId) {
     const user = ServerGame.users[userId];
     if (!user) return { success: false, message: "ユーザーが見つかりません。" };
@@ -870,7 +862,7 @@ async function removeVehicleFromLine(userId, vehicleId) {
     };
 }
 
-// ★追加: 駅の需要変動ロジック (変更なし、再掲)
+// 駅の需要変動ロジック
 function updateStationDemand() {
     const newsMessages = [];
     
@@ -906,7 +898,6 @@ function updateStationDemand() {
 
 
 async function dismantleLine(userId, lineId) {
-    // ... (省略: dismantleLineロジックは変更なし)
     const user = ServerGame.users[userId];
     if (!user) return { success: false, message: "ユーザーが見つかりません。" };
     const lineIndex = user.establishedLines.findIndex(l => l.id === lineId);
@@ -961,7 +952,6 @@ async function dismantleLine(userId, lineId) {
     };
 }
 async function dismantleStation(userId, stationId) {
-    // ... (省略: dismantleStationロジックは変更なし)
     const user = ServerGame.users[userId];
     if (!user) return { success: false, message: "ユーザーが見つかりません。" };
     const globalStationIndex = ServerGame.globalStats.stations.findIndex(s => s.id === stationId && s.ownerId === userId);
@@ -989,7 +979,6 @@ async function dismantleStation(userId, stationId) {
 }
 
 async function upgradeStation(userId, stationId, newType, cost) {
-    // ... (省略: upgradeStationロジックは変更なし)
     const user = ServerGame.users[userId];
     if (!user) return { success: false, message: "ユーザーが見つかりません。" };
     
@@ -1116,7 +1105,6 @@ async function serverSimulationLoop() {
 app.use(cookieParser());
 app.use(express.static(path.join(__dirname, 'public'))); 
 app.post('/login', express.json(), async (req, res) => {
-    // ... (省略: loginロジックは変更なし)
     const { username, password } = req.body;
     if (!username || username.length < 3 || !password) {
         return res.status(400).send({ message: "ユーザー名とパスワードを入力してください。" });
@@ -1213,7 +1201,6 @@ io.on('connection', (socket) => {
     });
     
     socket.on('buildStation', async (data) => {
-        // ... (省略: buildStationロジックは変更なし)
         if (!userId) return;
         const user = ServerGame.users[userId];
         const latlng = [data.latlng.lat, data.latlng.lng];
@@ -1277,7 +1264,6 @@ io.on('connection', (socket) => {
     });
     
     socket.on('upgradeStation', async (data) => {
-        // ... (省略: upgradeStationロジックは変更なし)
         if (!userId) return;
         
         const result = await upgradeStation(userId, data.stationId, data.newType, data.cost);
@@ -1302,7 +1288,6 @@ io.on('connection', (socket) => {
     });
     
     socket.on('renameStation', async (data) => {
-        // ... (省略: renameStationロジックは変更なし)
         if (!userId) return;
         
         const result = await renameStation(userId, data.stationId, data.newName);
@@ -1319,7 +1304,6 @@ io.on('connection', (socket) => {
     });
 
     socket.on('buildLine', async (data) => {
-        // ... (省略: buildLineロジックは変更なし)
         if (!userId || data.stationCoords.length < 2) return;
         
         const user = ServerGame.users[userId];
@@ -1405,7 +1389,6 @@ io.on('connection', (socket) => {
         }
     });
     socket.on('buyVehicle', async (data) => {
-        // ... (省略: buyVehicleロジックは変更なし)
         if (!userId) return;
         
         const user = ServerGame.users[userId];
@@ -1426,7 +1409,6 @@ io.on('connection', (socket) => {
     });
     
     socket.on('sellVehicle', async (data) => {
-        // ... (省略: sellVehicleロジックは変更なし)
         if (!userId) return;
         
         const result = await sellVehicle(userId, data.vehicleId);
@@ -1444,7 +1426,6 @@ io.on('connection', (socket) => {
     });
     
     socket.on('removeVehicleFromLine', async (data) => {
-        // ... (省略: removeVehicleFromLineロジックは変更なし)
         if (!userId) return;
         
         const result = await removeVehicleFromLine(userId, data.vehicleId);
@@ -1462,7 +1443,6 @@ io.on('connection', (socket) => {
     });
     
     socket.on('dismantleLine', async (data) => {
-        // ... (省略: dismantleLineロジックは変更なし)
         if (!userId) return;
         
         const result = await dismantleLine(userId, data.lineId); 
@@ -1483,7 +1463,6 @@ io.on('connection', (socket) => {
         }
     });
     socket.on('dismantleStation', async (data) => {
-        // ... (省略: dismantleStationロジックは変更なし)
         if (!userId) return;
         
         const result = await dismantleStation(userId, data.stationId); 
@@ -1503,14 +1482,16 @@ io.on('connection', (socket) => {
         }
     });
     socket.on('disconnect', () => {
-        // ...
+        if (userId && ServerGame.users[userId]) {
+            ServerGame.users[userId].socketId = null;
+            console.log(`User ${userId} disconnected.`);
+        }
     });
 });
 // =================================================================
 // E. サーバー起動ロジック
 // =================================================================
 async function initializeDatabase() {
-    // ... (省略: initializeDatabaseロジックは変更なし)
     const count = await GlobalStatsModel.countDocuments({});
     if (count === 0) {
         await GlobalStatsModel.create({
@@ -1524,7 +1505,6 @@ async function initializeDatabase() {
     }
 }
 async function loadGlobalStats() {
-    // ... (省略: loadGlobalStatsロジックは変更なし)
     const statsRow = await GlobalStatsModel.findById(1).lean();
     if (statsRow) {
         ServerGame.globalStats.gameTime = new Date(statsRow.gameTime);
