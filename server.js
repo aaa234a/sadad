@@ -4,11 +4,26 @@ const http = require('http');
 const socketio = require('socket.io');
 const cookieParser = require('cookie-parser');
 const path = require('path');
-const turf = require('@turf/turf'); 
 const mongoose = require('mongoose');
-const geolib = require('geolib'); 
-const axios = require('axios'); 
+const axios = require('axios');
 require('dotenv').config();
+
+const EARTH_RADIUS_KM = 6371.0088;
+
+function toRadians(value) {
+    return value * Math.PI / 180;
+}
+
+function haversineDistance(lat1, lng1, lat2, lng2) {
+    const dLat = toRadians(lat2 - lat1);
+    const dLng = toRadians(lng2 - lng1);
+    const a =
+        Math.sin(dLat / 2) ** 2 +
+        Math.cos(toRadians(lat1)) * Math.cos(toRadians(lat2)) *
+        Math.sin(dLng / 2) ** 2;
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    return EARTH_RADIUS_KM * c;
+}
 
 const app = express();
 const PORT = process.env.PORT || 3000; 
@@ -157,7 +172,7 @@ async function getAddressFromCoords(lat, lng) {
     }
 }
 
-// ★追加: Nominatim失敗時のフォールバック用（geolib + 静的データセット）(変更なし、再掲)
+// ★追加: Nominatim失敗時のフォールバック用（静的データセット）
 const JAPAN_LANDMARKS = [
     { name: "東京", lat: 35.681236, lng: 139.767125 },
     { name: "大阪", lat: 34.702485, lng: 135.495952 },
@@ -165,17 +180,17 @@ const JAPAN_LANDMARKS = [
     { name: "博多", lat: 33.590355, lng: 130.420658 },
     { name: "札幌", lat: 43.068611, lng: 141.350833 },
     { name: "横浜", lat: 35.465833, lng: 139.622778 },
-    { name: "仙台", lat: 38.260000, lng: 140.870000 },
+    { name: "仙台", lat: 38.26, lng: 140.87 },
     { name: "広島", lat: 34.396389, lng: 132.459444 },
     { name: "京都", lat: 35.001111, lng: 135.768333 },
-    { name: "神戸", lat: 34.690000, lng: 135.195556 },
+    { name: "神戸", lat: 34.69, lng: 135.195556 },
     { name: "千葉", lat: 35.604722, lng: 140.123333 },
     { name: "大宮", lat: 35.906944, lng: 139.623056 },
     { name: "新宿", lat: 35.689722, lng: 139.700556 },
     { name: "渋谷", lat: 35.658056, lng: 139.701667 },
     { name: "池袋", lat: 35.729722, lng: 139.710833 },
     { name: "天王寺", lat: 34.646944, lng: 135.508611 },
-    { name: "新大阪", lat: 34.733333, lng: 135.500000 },
+    { name: "新大阪", lat: 34.733333, lng: 135.5 },
     { name: "豊洲", lat: 35.657778, lng: 139.794444 },
     { name: "お台場", lat: 35.626111, lng: 139.779722 },
     { name: "羽田", lat: 35.549444, lng: 139.779722 },
@@ -193,26 +208,22 @@ const JAPAN_LANDMARKS = [
     { name: "岡山", lat: 34.661667, lng: 133.918333 },
     { name: "高松", lat: 34.340278, lng: 134.046944 },
     { name: "松山", lat: 33.841667, lng: 132.766667 },
-    { name: "長崎", lat: 32.750000, lng: 129.873056 },
+    { name: "長崎", lat: 32.75, lng: 129.873056 },
     { name: "熊本", lat: 32.789167, lng: 130.741667 },
     { name: "那覇", lat: 26.216667, lng: 127.683333 },
 ];
 
 function getAddressFromCoordsFallback(lat, lng) {
-    const targetCoord = { latitude: lat, longitude: lng };
-    
-    const nearest = geolib.findNearest(targetCoord, JAPAN_LANDMARKS.map(item => ({
-        latitude: item.lat,
-        longitude: item.lng,
-        name: item.name
-    })));
-    
-    if (nearest) {
-        const originalIndex = parseInt(nearest.key, 10);
-        return JAPAN_LANDMARKS[originalIndex].name;
+    let nearestName = null;
+    let minDistance = Infinity;
+    for (const landmark of JAPAN_LANDMARKS) {
+        const distance = haversineDistance(lat, lng, landmark.lat, landmark.lng);
+        if (distance < minDistance) {
+            minDistance = distance;
+            nearestName = landmark.name;
+        }
     }
-    
-    return null;
+    return nearestName;
 }
 
 // ★修正: 駅名生成ロジック (変更なし、再掲)
@@ -251,9 +262,7 @@ function getElevation(lat, lng) {
     return Math.round(Math.min(3000, Math.max(0, elevation)));
 }
 function getDistanceKm(coord1, coord2) {
-    const lngLat1 = [coord1[1], coord1[0]];
-    const lngLat2 = [coord2[1], coord2[0]];
-    return turf.distance(turf.point(lngLat1), turf.point(lngLat2), {units: 'kilometers'});
+    return haversineDistance(coord1[0], coord1[1], coord2[0], coord2[1]);
 }
 // ★修正: 建設コスト計算ロジックを強化 (高低差コストの明確化)
 function calculateConstructionCost(coord1, coord2, trackType) {
@@ -308,7 +317,7 @@ class ServerStation {
         this.lineConnections = []; 
         this.type = type; 
         this.capacity = this.getCapacityByType(type); 
-        this.occupyingVehicles = new Set(); 
+        this.occupyingVehicles = [];
     }
     
     getCapacityByType(type) {
@@ -353,12 +362,10 @@ class ServerVehicle {
             }
         }
         this.routeLength = this.totalRouteKm[this.totalRouteKm.length - 1] || 0;
-        
         this.crowdFactor = 0; // ★追加: 混雑度 (0.0 to 1.0)
     }
 
     getStationKm(station) {
-        // ... (省略: getStationKmロジックは変更なし)
         const COORD_TOLERANCE = 0.000001; 
         for(let i = 0; i < this.coords.length; i++) {
             if (Math.abs(this.coords[i][0] - station.latlng[0]) < COORD_TOLERANCE && 
@@ -377,7 +384,7 @@ class ServerVehicle {
             if (this.stopTimer <= 0) {
                 const currentStation = this.stations.find(s => this.getStationKm(s) === this.positionKm);
                 if (currentStation) {
-                    currentStation.occupyingVehicles.delete(this.id);
+                    this.releaseStation(currentStation);
                 }
                 this.status = 'Running';
             }
@@ -386,7 +393,7 @@ class ServerVehicle {
         
         if (this.status === 'Waiting') {
             const nextStation = this.stations.find(s => this.getStationKm(s) === this.waitingForStationKm);
-            if (nextStation && nextStation.occupyingVehicles.size < nextStation.capacity) {
+            if (nextStation && nextStation.occupyingVehicles.length < nextStation.capacity) {
                 this.status = 'Running';
                 this.waitingForStationKm = -1;
             } else {
@@ -464,9 +471,18 @@ class ServerVehicle {
         }
     }
     
+    releaseStation(station) {
+        const idx = station.occupyingVehicles.indexOf(this.id);
+        if (idx !== -1) {
+            station.occupyingVehicles.splice(idx, 1);
+        }
+    }
+    
     // ★修正: 収益計算ロジックの強化（混雑度、収益ログ）
     async handleStationArrival(station) {
-        station.occupyingVehicles.add(this.id);
+        if (station.occupyingVehicles.indexOf(this.id) === -1) {
+            station.occupyingVehicles.push(this.id);
+        }
         
         this.status = 'Stopping';
         this.stopTimer = 30; 
@@ -497,7 +513,7 @@ class ServerVehicle {
         const stationsAtLocation = ServerGame.globalStats.stations.filter(s => 
             s.latlng[0] === station.latlng[0] && s.latlng[1] === station.latlng[1]
         );
-        const totalConnections = stationsAtLocation.flatMap(s => s.lineConnections).length;
+        const totalConnections = stationsAtLocation.reduce((acc, s) => acc + s.lineConnections.length, 0);
         revenue *= (1 + Math.min(1.0, totalConnections * 0.1)); 
         
         revenue = Math.round(revenue);
@@ -912,7 +928,7 @@ async function dismantleLine(userId, lineId) {
     }
     await Promise.all(updatePromises);
     
-    await saveUserFinancials(user.userId, user.money, user.totalConstructionCost);
+    await	saveUserFinancials(user.userId, user.money, user.totalConstructionCost);
     return { 
         success: true, 
         message: `路線 ${lineId} を解体しました。車両売却収益: ¥${totalVehicleSaleRevenue.toLocaleString()}`,
@@ -1161,14 +1177,13 @@ io.on('connection', (socket) => {
         }
         
         try {
-            const newStationPoint = turf.point([latlng[1], latlng[0]]); 
+            const newStationPoint = { latitude: latlng[0], longitude: latlng[1] }; 
             const exclusionRadiusKm = 0.5; 
             
             for (const existingStation of ServerGame.globalStats.stations) {
                 if (existingStation.ownerId === userId) continue;
                 
-                const existingStationPoint = turf.point([existingStation.lng, existingStation.lat]);
-                const distanceKm = turf.distance(newStationPoint, existingStationPoint, { units: 'kilometers' });
+                const distanceKm = haversineDistance(newStationPoint.latitude, newStationPoint.longitude, existingStation.lat, existingStation.lng);
                 
                 if (distanceKm < exclusionRadiusKm) {
                     socket.emit('error', `他のプレイヤー (${existingStation.ownerId}) の駅が ${Math.round(distanceKm * 1000)}m 以内にあります。建設できません。`);
