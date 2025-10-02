@@ -441,7 +441,7 @@
                 s.type, 
                 s.capacity,
                 s.name, // 駅名
-                s.demand // 需要
+                s.demand // ★変更: 需要を追加
               )
           );
         },
@@ -544,9 +544,9 @@
             
             // ★追加: 需要情報
             if (this.demand) {
-                popupContent += `<hr><b>📊 需要 (月間)</b><br>`;
-                popupContent += `旅客: ${this.demand.passenger.toLocaleString()}人<br>`;
-                popupContent += `貨物: ${this.demand.freight.toLocaleString()}t`;
+                popupContent += `<hr><b>📊 需要</b><br>`;
+                popupContent += `旅客: ${this.demand.passenger.toLocaleString()}人/月<br>`;
+                popupContent += `貨物: ${this.demand.freight.toLocaleString()}t/月`;
             }
             
             if (this.ownerId === Game.userId) {
@@ -664,7 +664,7 @@
         });
 
         socket.on("stationBuilt", (data) => {
-          // 駅名(data.name)と需要(data.demand)を渡す
+          // ★変更: 駅名(data.name)と需要(data.demand)を渡す
           new Station(data.id, data.latlng, map, data.ownerId, data.type, data.capacity, data.name, data.demand); 
           Game.updateGlobalStats({ globalStats: { stationsCount: Game.stations.length } });
         });
