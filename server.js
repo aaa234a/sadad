@@ -138,19 +138,20 @@ async function loadPopulationTiff() {
     try {
         console.log(`GeoTIFFを外部URLからロード中: ${WORLDPOP_URL}`);
         
-        // ★ 外部URLからGeoTIFFをロード
+        // GeoTIFF をロード
         const tiff = await fromUrl(WORLDPOP_URL);
         tiffImage = await tiff.getImage(0);
         
-        // GeoTIFFのメタデータ（座標情報）を取得
+        // GeoKeysを取得
         const geoKeys = tiffImage.getGeoKeys();
         geoKeyDirectory = geoKeys.GeoKeyDirectory;
         
-        // ピクセルと地理座標のスケールを取得
+        // ピクセルと地理座標のスケール
         pixelScale = tiffImage.getFileDirectory().ModelPixelScale;
 
         console.log(`GeoTIFFロード完了。サイズ: ${tiffImage.getWidth()}x${tiffImage.getHeight()}`);
-        console.log(`GeoTIFFのCRSはEPSG:${geoKeyDirectory[1024] || '不明'}を想定`);
+        console.log(`GeoTIFFのCRSはEPSG:${geoKeyDirectory?.GTModelTypeGeoKey || '不明'}を想定`);
+
     } catch (error) {
         console.error("GeoTIFFのロード中にエラーが発生しました。人口需要はデフォルト値を使用します。", error.message);
         tiffImage = null;
@@ -164,51 +165,47 @@ async function loadPopulationTiff() {
  * @returns {number} 人口密度 (人/km²)
  */
 async function getPopulationDensityFromCoords(lat, lng) {
-    if (!tiffImage) return 50; // ロード失敗時は最低値を返す
+    if (!tiffImage) return 50; // ロード失敗時のデフォルト値
 
     try {
-        // 1. WGS84 (lat, lng) を GeoTIFFのCRSに変換
         let x, y;
-        
-        // GeoTIFFのCRSがWGS84 (EPSG:4326) の場合、変換は不要
-        // GeoTIFFのCRSがWeb Mercator (EPSG:3857) の場合、変換が必要
-        // 実際のGeoTIFFのCRSに応じて調整してください。ここでは3857を仮定
-        if (geoKeyDirectory && geoKeyDirectory[1024] === 3857) {
-             // 緯度経度から Web Mercator に変換
-[x, y] = proj4('EPSG:4326', 'EPSG:3857', [lng, lat]);
 
+        // CRS 判定（安全に optional chaining）
+        const crs = geoKeyDirectory?.GTModelTypeGeoKey;
+
+        if (crs === 1) {
+            // 投影座標系なら EPSGコードを取得（なければ 3857 デフォルト）
+            const epsg = geoKeyDirectory?.ProjectedCSTypeGeoKey || 3857;
+            [x, y] = proj4('EPSG:4326', `EPSG:${epsg}`, [lng, lat]);
         } else {
-             // WGS84を仮定
-             x = lng;
-             y = lat;
+            // 地理座標系（WGS84）はそのまま
+            x = lng;
+            y = lat;
         }
 
-        // 2. 地理座標 (x, y) をピクセル座標 (px, py) に変換
+        // GeoTIFF の原点と解像度を取得
         const [originX, originY] = tiffImage.getOrigin();
         const [resX, resY] = tiffImage.getResolution();
-        
-        // ピクセル座標を計算
-        const px = Math.floor((x - originX) / resX);
-        const py = Math.floor((originY - y) / resY); // Y軸は反転していることが多い
 
-        // 3. ピクセル座標がGeoTIFFの範囲内にあるか確認
+        // ピクセル座標に変換
+        const px = Math.floor((x - originX) / resX);
+        const py = Math.floor((originY - y) / resY); // Y軸反転に注意
+
+        // 範囲チェック
         if (px < 0 || px >= tiffImage.getWidth() || py < 0 || py >= tiffImage.getHeight()) {
             return 50; // 範囲外は低人口密度
         }
 
-        // 4. ピクセル値（人口密度）を読み取り
-        // readRastersは非同期操作
+        // ピクセル値を取得
         const rasters = await tiffImage.readRasters({ window: [px, py, px + 1, py + 1] });
         
         if (rasters && rasters.length > 0 && rasters[0].length > 0) {
             const population = rasters[0][0];
-            // 人口データは「人口総数」または「人口密度」のどちらか
-            // WorldPopのデータは通常、メッシュ内の人口総数（人）
-            // 1kmメッシュなので、この値が「人口密度（人/km²）」とほぼ同義になる
-            return Math.max(1, Math.round(population));
+            return Math.max(1, Math.round(population)); // 1以上に丸める
         }
 
         return 50;
+
     } catch (error) {
         console.error("GeoTIFFからの人口密度取得中にエラー:", error.message);
         return 50;
