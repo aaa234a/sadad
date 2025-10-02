@@ -12,9 +12,19 @@ const proj4 = require('proj4'); // ★ 座標変換ライブラリ
 require('dotenv').config();
 
 const app = express();
-const PORT = process.env.ENV_PORT || 3000; 
+const PORT = process.env.PORT || 3000; 
 const server = http.createServer(app);
 const io = socketio(server);
+
+// =================================================================
+// 0. データベース接続とMongooseスキーマ定義
+// =================================================================
+
+const MONGO_URI = process.env.ENV_MONGO_URI || "mongodb+srv://ktyoshitu87_db_user:3137admin@cluster0.ag8sryr.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0";
+if (!MONGO_URI) {
+    console.error("FATAL ERROR: MONGO_URI environment variable is not set.");
+    process.exit(1);
+}
 
 // =================================================================
 // 0. データベース接続とMongooseスキーマ定義 (変更なし)
