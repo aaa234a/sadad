@@ -132,7 +132,7 @@ let pixelScale = null;
 
 // EPSG:3857 (Web Mercator) から EPSG:4326 (WGS84: 緯度経度) への変換を定義
 // GeoTIFFがEPSG:3857の場合に必要
-const projection = proj4.default('EPSG:3857', 'EPSG:4326');
+const projection = proj4('EPSG:3857', 'EPSG:4326');
 
 async function loadPopulationTiff() {
     try {
@@ -174,7 +174,9 @@ async function getPopulationDensityFromCoords(lat, lng) {
         // GeoTIFFのCRSがWeb Mercator (EPSG:3857) の場合、変換が必要
         // 実際のGeoTIFFのCRSに応じて調整してください。ここでは3857を仮定
         if (geoKeyDirectory && geoKeyDirectory[1024] === 3857) {
-             [x, y] = proj4.default('EPSG:4326', 'EPSG:3857', [lng, lat]);
+             // 緯度経度から Web Mercator に変換
+[x, y] = proj4('EPSG:4326', 'EPSG:3857', [lng, lat]);
+
         } else {
              // WGS84を仮定
              x = lng;
