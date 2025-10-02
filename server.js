@@ -7,7 +7,7 @@ const path = require('path');
 const turf = require('@turf/turf'); 
 const mongoose = require('mongoose');
 const geolib = require('geolib'); 
-const axios = require('axios'); // ★変更: axiosを使用
+const axios = require('axios'); 
 require('dotenv').config();
 
 const app = express();
@@ -19,6 +19,7 @@ const io = socketio(server);
 // 0. データベース接続とMongooseスキーマ定義
 // =================================================================
 
+// ★注意: ここはダミーのURIです。実際の環境変数に置き換えてください。
 const MONGO_URI = process.env.ENV_MONGO_URI || "mongodb+srv://ktyoshitu87_db_user:3137admin@cluster0.ag8sryr.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0";
 if (!MONGO_URI) {
     console.error("FATAL ERROR: MONGO_URI environment variable is not set.");
@@ -52,6 +53,7 @@ const UserSchema = new mongoose.Schema({
     password: { type: String, required: true },
     money: { type: Number, default: 5000000000 },
     totalConstructionCost: { type: Number, default: 0 },
+    lineColorIndex: { type: Number, default: 0 },
 }, { collection: 'users' });
 const UserModel = mongoose.model('User', UserSchema);
 
@@ -67,7 +69,7 @@ const StationSchema = new mongoose.Schema({
     },
     lineConnections: [Number],
     type: { type: String, enum: ['Small', 'Medium', 'Large'], default: 'Small' },
-    capacity: { type: Number, default: 3 }, // 停車可能列車数
+    capacity: { type: Number, default: 3 }, 
 }, { collection: 'stations' });
 const StationModel = mongoose.model('Station', StationSchema);
 
@@ -96,12 +98,22 @@ const VehicleSchema = new mongoose.Schema({
 }, { collection: 'vehicles' });
 const VehicleModel = mongoose.model('Vehicle', VehicleSchema);
 
+const RevenueLogSchema = new mongoose.Schema({
+    userId: { type: String, required: true },
+    type: { type: String, enum: ['revenue', 'maintenance', 'news'], required: true },
+    amount: { type: Number, default: 0 },
+    message: String,
+    timestamp: { type: Date, default: Date.now },
+}, { collection: 'revenue_logs' });
+const RevenueLogModel = mongoose.model('RevenueLog', RevenueLogSchema);
+
+
 // =================================================================
 // A. サーバーサイド・ゲーム定数とユーティリティ
 // =================================================================
 const STATION_COST = 50000000;
 const VEHICLE_BASE_COST = 8000000;
-const LINE_COLORS = ['#E4007F', '#009933', '#0000FF', '#FFCC00', '#FF6600', '#9900CC'];
+const LINE_COLORS = ['#E4007F', '#009933', '#0000FF', '#FFCC00', '#FF6600', '#9900CC', '#00FFFF', '#FF00FF', '#C0C0C0', '#800000']; 
 const VehicleData = {
     COMMUTER: { name: "通勤形", maxSpeedKmH: 100, capacity: 500, maintenanceCostPerKm: 400, type: 'passenger', color: '#008000', purchaseMultiplier: 1.0 },
     EXPRESS: { name: "優等形", maxSpeedKmH: 160, capacity: 600, maintenanceCostPerKm: 700, type: 'passenger', color: '#FF0000', purchaseMultiplier: 1.5 },
@@ -113,50 +125,38 @@ const VehicleData = {
     TRAM: { name: "路面電車", maxSpeedKmH: 50, capacity: 150, maintenanceCostPerKm: 100, type: 'passenger', color: '#808080', purchaseMultiplier: 0.5 }, 
 };
 
-// ★修正: Nominatim APIからの地名取得関数 (axios使用)
+// ★修正: Nominatim APIからの地名取得関数 (変更なし、再掲)
 async function getAddressFromCoords(lat, lng) {
-    // OpenStreetMap Nominatim API (逆ジオコーディング)
     const url = `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lng}&format=json&accept-language=ja&zoom=16`;
-    
-    // Nominatimは利用規約により、高い負荷をかけないよう注意が必要です
-    // 適切なUser-Agentを設定することが推奨されています
     try {
         const response = await axios.get(url, {
-            headers: { "User-Agent": "RailwayTycoonGameServer/1.0 (Contact: your-email@example.com)" } // 適切なUser-Agentを設定
+            headers: { "User-Agent": "RailwayTycoonGameServer/1.0 (Contact: your-email@example.com)" } 
         });
         
         const data = response.data;
         
         if (data.address) {
-            // 日本語の地名を取得するロジック
-            // 優先度: 道路名/ランドマーク > 町名 > 市区町村名
             const address = data.address;
             
-
-            
-            // 町名・区名
             if (address.neighbourhood) return address.neighbourhood;
             if (address.suburb) return address.suburb;
             if (address.city_district) return address.city_district;
             if (address.town) return address.town;
             if (address.village) return address.village;
             
-            // 市区町村名
             if (address.city) return address.city;
             if (address.county) return address.county;
             
-            // 最終フォールバック
             return data.display_name.split(',')[0].trim();
         }
         return null;
     } catch (error) {
         console.error("Error fetching address from Nominatim:", error.message);
-        // Nominatimが失敗した場合のフォールバックとして、geolibと静的データセットを使用
         return getAddressFromCoordsFallback(lat, lng); 
     }
 }
 
-// ★追加: Nominatim失敗時のフォールバック用（geolib + 静的データセット）
+// ★追加: Nominatim失敗時のフォールバック用（geolib + 静的データセット）(変更なし、再掲)
 const JAPAN_LANDMARKS = [
     { name: "東京", lat: 35.681236, lng: 139.767125 },
     { name: "大阪", lat: 34.702485, lng: 135.495952 },
@@ -214,33 +214,24 @@ function getAddressFromCoordsFallback(lat, lng) {
     return null;
 }
 
-// ★修正: 駅名生成ロジックを非同期に戻し、Nominatimを使用
+// ★修正: 駅名生成ロジック (変更なし、再掲)
 async function generateRegionalStationName(lat, lng) {
     const regionalName = await getAddressFromCoords(lat, lng);
     
-    // 1. Nominatimまたはフォールバックから地名が取得できた場合
     if (regionalName) {
-        // 取得した地名に「駅」を合成
-        // 例: 「東京都江東区豊洲四丁目」 -> 「豊洲駅」
-        // 地名から不要な部分（「通り」「公園」「〇丁目」など）を削除し、簡潔な駅名にする
-        // ★修正点: [一二三四五六七八九十]丁目 を追加
         let baseName = regionalName.replace(/通り|公園|広場|交差点|ビル|マンション|アパート|[一二三四五六七八九十]丁目|番地|日本|Japan/g, '').trim();
         
         if (baseName.endsWith("駅")) {
-            // 既に「駅」で終わっている場合はそのまま
             return baseName;
         }
         
-        // 地名が長すぎる場合は短縮
         if (baseName.length > 10) {
             baseName = baseName.substring(0, 10);
         }
         
-        // 最後に「駅」を付与
         return `${baseName}駅`;
     }
     
-    // 2. 最終フォールバック (Nominatimもgeolibフォールバックも失敗した場合)
     const randomAreas = ["新興", "郊外", "住宅", "公園", "中央", "東", "西", "南", "北"];
     const randomSuffixes = ["台", "丘", "本", "前", "野", "ヶ原"];
     const area = randomAreas[Math.floor(Math.random() * randomAreas.length)];
@@ -263,6 +254,7 @@ function getDistanceKm(coord1, coord2) {
     const lngLat2 = [coord2[1], coord2[0]];
     return turf.distance(turf.point(lngLat1), turf.point(lngLat2), {units: 'kilometers'});
 }
+// ★修正: 建設コスト計算ロジック (変更なし、再掲)
 function calculateConstructionCost(coord1, coord2, trackType) {
     const distanceKm = getDistanceKm(coord1, coord2);
     if (distanceKm === 0) return { cost: 0, lengthKm: 0 };
@@ -270,35 +262,49 @@ function calculateConstructionCost(coord1, coord2, trackType) {
     const elev1 = getElevation(coord1[0], coord1[1]);
     const elev2 = getElevation(coord2[0], coord2[1]);
     const elevationDiff = Math.abs(elev1 - elev2);
-    let baseCost = distanceKm * 2500000;
     
-    if (trackType === 'double') baseCost *= 1.8;
-    else if (trackType === 'linear') baseCost *= 5.0; 
-    else if (trackType === 'tram') baseCost *= 0.8; 
+    const TRACK_MULTIPLIERS = {
+        single: 1.0,
+        double: 1.8,
+        linear: 5.0,
+        tram: 0.8
+    };
+    const trackMultiplier = TRACK_MULTIPLIERS[trackType] || 1.0;
     
+    // 1. ベースコスト (1kmあたり2.5M)
+    let baseCost = distanceKm * 2500000 * trackMultiplier;
+    
+    // 2. 勾配コスト (高低差が大きいほどコスト増)
     const slope = elevationDiff / lengthM;
     let slopeMultiplier = 1;
-    if (slope > 0.1) slopeMultiplier = Math.pow(slope * 15, 3);
-    else if (slope > 0.05) slopeMultiplier = Math.pow(slope * 10, 2);
-    else if (slope > 0.03) slopeMultiplier = slope * 5;
+    if (slope > 0.03) slopeMultiplier = 1 + Math.pow(slope * 10, 2); 
+    const slopeCost = (slopeMultiplier - 1) * baseCost;
     
-    const slopeCost = slopeMultiplier * 500000 * lengthM; 
-    const highElevationCost = Math.max(0, (elev1 + elev2) / 2 - 100) * 5000;
+    // 3. 高所コスト (標高が高いほどコスト増)
+    const avgElevation = (elev1 + elev2) / 2;
+    const highElevationCost = Math.max(0, avgElevation - 100) * 5000 * distanceKm; 
+    
     const totalCost = baseCost + slopeCost + highElevationCost;
-    return { cost: Math.round(totalCost), lengthKm: distanceKm };
+    
+    return { 
+        cost: Math.round(totalCost), 
+        lengthKm: distanceKm,
+        baseCost: Math.round(baseCost),
+        slopeCost: Math.round(slopeCost),
+        highElevationCost: Math.round(highElevationCost)
+    };
 }
 // =================================================================
 // B. サーバーサイド・クラス定義
 // =================================================================
 class ServerStation {
-    // ★変更: コンストラクタを非同期にできないため、初期化ロジックを分離
-    constructor(id, latlng, ownerId, type = 'Small', initialName = null) {
+    // ... (省略: ServerStationロジックは変更なし)
+    constructor(id, latlng, ownerId, type = 'Small', initialName = null, demand = null) {
         this.id = id;
         this.latlng = latlng;
         this.ownerId = ownerId;
-        // DBからロードされた名前、または仮の名前を設定
         this.name = initialName || `仮駅名 ${id}`; 
-        this.demand = { 
+        this.demand = demand || { 
             passenger: Math.round(50 + Math.random() * 300),
             freight: Math.round(10 + Math.random() * 100)
         };
@@ -326,28 +332,33 @@ class ServerStation {
     get lng() { return this.latlng[1]; }
 }
 class ServerVehicle {
-    constructor(id, line, data) {
+    // ... (省略: ServerVehicleロジックは変更なし)
+    constructor(id, line, data, status = 'Running') { 
         this.id = id;
-        this.lineId = line.id;
-        this.ownerId = line.ownerId;
+        this.lineId = line ? line.id : null; 
+        this.ownerId = line ? line.ownerId : null;
         this.data = data;
-        this.coords = line.coords;
-        this.stations = line.stations; 
+        this.coords = line ? line.coords : [];
+        this.stations = line ? line.stations : []; 
         
         this.positionKm = 0; 
-        this.status = 'Running'; 
+        this.status = status; 
         this.isReversed = false; 
         this.stopTimer = 0; 
-        this.currentLat = this.coords[0][0];
-        this.currentLng = this.coords[0][1];
+        this.currentLat = this.coords.length > 0 ? this.coords[0][0] : 0;
+        this.currentLng = this.coords.length > 0 ? this.coords[0][1] : 0;
         this.waitingForStationKm = -1; 
 
         this.totalRouteKm = [0];
-        for(let i = 1; i < this.coords.length; i++) {
-            const segmentKm = getDistanceKm(this.coords[i-1], this.coords[i]);
-            this.totalRouteKm.push(this.totalRouteKm[i-1] + segmentKm);
+        if (this.coords.length > 1) {
+            for(let i = 1; i < this.coords.length; i++) {
+                const segmentKm = getDistanceKm(this.coords[i-1], this.coords[i]);
+                this.totalRouteKm.push(this.totalRouteKm[i-1] + segmentKm);
+            }
         }
-        this.routeLength = this.totalRouteKm[this.totalRouteKm.length - 1];
+        this.routeLength = this.totalRouteKm[this.totalRouteKm.length - 1] || 0;
+        
+        this.crowdFactor = 0; 
     }
 
     getStationKm(station) {
@@ -362,6 +373,8 @@ class ServerVehicle {
     }
 
     move(gameDeltaSeconds) {
+        if (this.status === 'Idle') return; 
+        
         if (this.status === 'Stopping') {
             this.stopTimer -= gameDeltaSeconds;
             if (this.stopTimer <= 0) {
@@ -401,7 +414,7 @@ class ServerVehicle {
             }
         });
         
-        const safetyDistance = 1.0; // 500メートル手前でチェック
+        const safetyDistance = 1.0; 
 
         if (nextStation) {
             const nextStationKm = this.getStationKm(nextStation);
@@ -483,7 +496,7 @@ class ServerVehicle {
         }
     }
     
-    handleStationArrival(station) {
+    async handleStationArrival(station) {
         station.occupyingVehicles.add(this.id);
         
         this.status = 'Stopping';
@@ -491,26 +504,57 @@ class ServerVehicle {
         let revenue = 0;
         const revenueMultiplier = this.data.revenueMultiplier || 1.0;
         
-        // 収益を約半分に減らす (5000 -> 2500, 2000 -> 1000)
+        let demandValue = 0;
+        let capacityValue = 0;
         if (this.data.type === 'passenger') {
-            revenue = station.demand.passenger * this.data.capacity / 100 * 2500 * revenueMultiplier; 
+            demandValue = station.demand.passenger;
+            capacityValue = this.data.capacity;
         } else if (this.data.type === 'freight') {
-            revenue = station.demand.freight * this.data.capacity / 500 * 1000 * revenueMultiplier;
+            demandValue = station.demand.freight;
+            capacityValue = this.data.capacity;
         }
+        
+        this.crowdFactor = Math.min(1.0, demandValue / capacityValue);
+        
+        if (this.data.type === 'passenger') {
+            revenue = demandValue * 5000 * revenueMultiplier * (1 + this.crowdFactor * 0.5); 
+        } else if (this.data.type === 'freight') {
+            revenue = demandValue * 2000 * revenueMultiplier * (1 + this.crowdFactor * 0.3);
+        }
+        
         const stationsAtLocation = ServerGame.globalStats.stations.filter(s => 
             s.latlng[0] === station.latlng[0] && s.latlng[1] === station.latlng[1]
         );
-        
         const totalConnections = stationsAtLocation.flatMap(s => s.lineConnections).length;
-        
         revenue *= (1 + Math.min(1.0, totalConnections * 0.1)); 
+        
+        revenue = Math.round(revenue);
+        
         if (ServerGame.users[this.ownerId]) {
-            ServerGame.users[this.ownerId].money += Math.round(revenue);
-            ServerGame.users[this.ownerId].moneyUpdated = true; 
+            const user = ServerGame.users[this.ownerId];
+            user.money += revenue;
+            user.moneyUpdated = true; 
+            
+            const log = await RevenueLogModel.create({
+                userId: this.ownerId,
+                type: 'revenue',
+                amount: revenue,
+                message: `${this.data.name} #${this.id} が ${station.name} に到着`,
+            });
+            
+            if (user.socketId) {
+                io.to(user.socketId).emit('revenueLog', {
+                    type: 'revenue',
+                    amount: revenue,
+                    vehicleName: this.data.name,
+                    stationName: station.name
+                });
+            }
         }
     }
 }
 class ServerLineManager {
+    // ... (省略: ServerLineManagerロジックは変更なし)
     constructor(id, ownerId, stations, coords, cost, lengthKm, color, trackType) {
         this.id = id;
         this.ownerId = ownerId;
@@ -567,7 +611,7 @@ class ServerLineManager {
         return { success: true, vehicle: newVehicle };
     }
     runSimulation(gameDeltaSeconds) {
-        this.vehicles.forEach(v => v.move(gameDeltaSeconds));
+        this.vehicles.filter(v => v.status !== 'Idle').forEach(v => v.move(gameDeltaSeconds)); 
     }
 }
 // =================================================================
@@ -584,6 +628,7 @@ const ServerGame = {
         nextStationId: 1,
         nextLineId: 1,
         nextVehicleId: 1,
+        lastNewsTime: new Date(), 
     },
     VehicleData: VehicleData,
 };
@@ -591,6 +636,7 @@ const ServerGame = {
 // C-1. DB操作関数 (Mongoose)
 // =================================================================
 async function saveGlobalStats() {
+    // ... (省略: saveGlobalStatsロジックは変更なし)
     const stats = ServerGame.globalStats;
     await GlobalStatsModel.updateOne({ _id: 1 }, {
         $set: {
@@ -604,6 +650,7 @@ async function saveGlobalStats() {
 }
 
 async function saveUserFinancials(userId, money, totalConstructionCost) {
+    // ... (省略: saveUserFinancialsロジックは変更なし)
     await UserModel.updateOne({ userId: userId }, {
         $set: {
             money: money,
@@ -624,6 +671,8 @@ async function loadUserData(userId) {
         establishedLines: [],
         vehicles: [],
         moneyUpdated: false, 
+        lineColorIndex: userRow.lineColorIndex || 0, 
+        lineConstructionCost: 0, // ★追加: ユーザーごとの概算コストキャッシュ
     };
 
     const linesRes = await LineModel.find({ ownerId: userId }).lean();
@@ -644,26 +693,29 @@ async function loadUserData(userId) {
     const vehiclesRes = await VehicleModel.find({ ownerId: userId }).lean();
     vehiclesRes.forEach(row => {
         const line = user.establishedLines.find(l => l.id === row.lineId);
+        const data = VehicleData[row.dataKey];
+        
+        const vehicle = new ServerVehicle(row.id, line || { id: row.lineId, ownerId: row.ownerId, coords: [], stations: [] }, data, row.status); 
+        
+        vehicle.lineId = row.lineId; 
+        vehicle.positionKm = row.positionKm;
+        vehicle.status = row.status;
+        vehicle.isReversed = row.isReversed;
+        vehicle.stopTimer = row.stopTimer;
+        vehicle.currentLat = row.currentLat;
+        vehicle.currentLng = row.currentLng;
+        
         if (line) {
-            const data = VehicleData[row.dataKey];
-            const vehicle = new ServerVehicle(row.id, line, data);
-            
-            vehicle.positionKm = row.positionKm;
-            vehicle.status = row.status;
-            vehicle.isReversed = row.isReversed;
-            vehicle.stopTimer = row.stopTimer;
-            vehicle.currentLat = row.currentLat;
-            vehicle.currentLng = row.currentLng;
-            
             line.vehicles.push(vehicle);
-            user.vehicles.push(vehicle);
         }
+        user.vehicles.push(vehicle);
     });
     return user;
 }
 
-// ★変更: 駅名リネーム関数 (変更なし、再掲)
+// ★修正: 駅名リネーム関数 (変更なし、再掲)
 async function renameStation(userId, stationId, newName) {
+    // ... (省略: renameStationロジックは変更なし)
     const user = ServerGame.users[userId];
     if (!user) return { success: false, message: "ユーザーが見つかりません。" };
     
@@ -695,6 +747,7 @@ async function renameStation(userId, stationId, newName) {
 // C-2. ゲームロジック関数
 // =================================================================
 async function calculateMonthlyMaintenance() {
+    // ... (省略: calculateMonthlyMaintenanceロジックは変更なし)
     let totalCost = 0;
     
     for (const user of Object.values(ServerGame.users)) {
@@ -713,16 +766,32 @@ async function calculateMonthlyMaintenance() {
         totalCost += userCost;
         
         await saveUserFinancials(user.userId, user.money, user.totalConstructionCost);
+        
+        await RevenueLogModel.create({
+            userId: user.userId,
+            type: 'maintenance',
+            amount: -userCost,
+            message: `月次維持費の支払い`,
+        });
+        
+        if (user.socketId) {
+            io.to(user.socketId).emit('revenueLog', {
+                type: 'maintenance',
+                amount: -userCost,
+                message: `月次維持費の支払い`,
+            });
+        }
     }
     ServerGame.globalStats.lastMonthlyMaintenance = totalCost;
 }
 
 async function calculateRanking() {
+    // ... (省略: calculateRankingロジックは変更なし)
     const allUsers = await UserModel.find({}).lean();
     
     const rankingPromises = allUsers.map(async (user) => {
         const totalConstructionCost = user.totalConstructionCost;
-        const vehicleCount = await VehicleModel.countDocuments({ ownerId: user.userId });
+        const vehicleCount = await VehicleModel.countDocuments({ ownerId: user.userId, status: { $ne: 'Idle' } }); 
         
         const score = user.money + totalConstructionCost * 0.7 + vehicleCount * 10000000;
         
@@ -739,7 +808,105 @@ async function calculateRanking() {
         .slice(0, 10);
 }
 
+// ★追加: 車両売却ロジック (変更なし、再掲)
+async function sellVehicle(userId, vehicleId) {
+    const user = ServerGame.users[userId];
+    if (!user) return { success: false, message: "ユーザーが見つかりません。" };
+    
+    const vehicleIndex = user.vehicles.findIndex(v => v.id === vehicleId);
+    if (vehicleIndex === -1) return { success: false, message: "あなたの車両が見つかりません。" };
+    
+    const vehicleToSell = user.vehicles[vehicleIndex];
+    const data = vehicleToSell.data;
+    const salePrice = Math.round(VEHICLE_BASE_COST * data.purchaseMultiplier * 0.5); 
+    
+    user.money += salePrice;
+    user.vehicles.splice(vehicleIndex, 1);
+    
+    await VehicleModel.deleteOne({ id: vehicleId });
+    await saveUserFinancials(user.userId, user.money, user.totalConstructionCost);
+    
+    if (vehicleToSell.lineId) {
+        const line = user.establishedLines.find(l => l.id === vehicleToSell.lineId);
+        if (line) {
+            line.vehicles = line.vehicles.filter(v => v.id !== vehicleId);
+        }
+    }
+    
+    return { 
+        success: true, 
+        message: `車両 #${vehicleId} (${data.name}) を売却し、¥${salePrice.toLocaleString()}を獲得しました。`,
+        vehicleId: vehicleId
+    };
+}
+
+// ★追加: 車両の路線からの撤去ロジック (変更なし、再掲)
+async function removeVehicleFromLine(userId, vehicleId) {
+    const user = ServerGame.users[userId];
+    if (!user) return { success: false, message: "ユーザーが見つかりません。" };
+    
+    const vehicle = user.vehicles.find(v => v.id === vehicleId);
+    if (!vehicle) return { success: false, message: "あなたの車両が見つかりません。" };
+    
+    if (vehicle.status === 'Idle') return { success: false, message: "車両は既に待機状態です。" };
+    
+    vehicle.status = 'Idle';
+    vehicle.lineId = null;
+    
+    await VehicleModel.updateOne(
+        { id: vehicleId },
+        { $set: { status: 'Idle', lineId: null } }
+    );
+    
+    const line = user.establishedLines.find(l => l.vehicles.some(v => v.id === vehicleId));
+    if (line) {
+        line.vehicles = line.vehicles.filter(v => v.id !== vehicleId);
+    }
+    
+    return { 
+        success: true, 
+        message: `車両 #${vehicleId} (${vehicle.data.name}) を路線から撤去し、待機状態にしました。`,
+        vehicleId: vehicleId
+    };
+}
+
+// ★追加: 駅の需要変動ロジック (変更なし、再掲)
+function updateStationDemand() {
+    const newsMessages = [];
+    
+    ServerGame.globalStats.stations.forEach(station => {
+        station.demand.passenger = Math.max(50, station.demand.passenger * (1 + (Math.random() - 0.5) * 0.2));
+        station.demand.freight = Math.max(10, station.demand.freight * (1 + (Math.random() - 0.5) * 0.2));
+        
+        if (Math.random() < 0.05) {
+            const factor = 1.5 + Math.random(); 
+            if (Math.random() < 0.5) {
+                station.demand.passenger *= factor;
+                newsMessages.push(`${station.name} 周辺で大規模イベントが発生！旅客需要が急増！`);
+            } else {
+                station.demand.freight *= factor;
+                newsMessages.push(`${station.name} 周辺に新工場が建設！貨物需要が急増！`);
+            }
+        }
+        
+        station.demand.passenger = Math.round(station.demand.passenger);
+        station.demand.freight = Math.round(station.demand.freight);
+    });
+    
+    if (newsMessages.length > 0) {
+        const news = { message: newsMessages[Math.floor(Math.random() * newsMessages.length)] };
+        io.emit('gameNews', news);
+    }
+    
+    const updatePromises = ServerGame.globalStats.stations.map(s => 
+        StationModel.updateOne({ id: s.id }, { $set: { demand: s.demand } })
+    );
+    Promise.all(updatePromises);
+}
+
+
 async function dismantleLine(userId, lineId) {
+    // ... (省略: dismantleLineロジックは変更なし)
     const user = ServerGame.users[userId];
     if (!user) return { success: false, message: "ユーザーが見つかりません。" };
     const lineIndex = user.establishedLines.findIndex(l => l.id === lineId);
@@ -754,14 +921,17 @@ async function dismantleLine(userId, lineId) {
     
     const vehiclesOnLine = user.vehicles.filter(v => v.lineId === lineId);
     
-    vehiclesOnLine.forEach(v => {
-        const purchaseCost = VEHICLE_BASE_COST * v.data.purchaseMultiplier;
-        const saleRevenue = Math.round(purchaseCost / 3);
+    const vehicleSalePromises = vehiclesOnLine.map(async v => {
+        const data = v.data;
+        const purchaseCost = VEHICLE_BASE_COST * data.purchaseMultiplier;
+        const saleRevenue = Math.round(purchaseCost / 3); 
         user.money += saleRevenue;
         totalVehicleSaleRevenue += saleRevenue;
+        await VehicleModel.deleteOne({ id: v.id });
     });
+    await Promise.all(vehicleSalePromises);
+    
     user.vehicles = user.vehicles.filter(v => v.lineId !== lineId);
-    await VehicleModel.deleteMany({ lineId: lineId });
     
     user.establishedLines.splice(lineIndex, 1);
     user.totalConstructionCost -= lineToDismantle.cost;
@@ -791,6 +961,7 @@ async function dismantleLine(userId, lineId) {
     };
 }
 async function dismantleStation(userId, stationId) {
+    // ... (省略: dismantleStationロジックは変更なし)
     const user = ServerGame.users[userId];
     if (!user) return { success: false, message: "ユーザーが見つかりません。" };
     const globalStationIndex = ServerGame.globalStats.stations.findIndex(s => s.id === stationId && s.ownerId === userId);
@@ -818,6 +989,7 @@ async function dismantleStation(userId, stationId) {
 }
 
 async function upgradeStation(userId, stationId, newType, cost) {
+    // ... (省略: upgradeStationロジックは変更なし)
     const user = ServerGame.users[userId];
     if (!user) return { success: false, message: "ユーザーが見つかりません。" };
     
@@ -849,6 +1021,7 @@ async function upgradeStation(userId, stationId, newType, cost) {
 
 
 let lastSimTime = performance.now();
+let lastDbUpdateTime = performance.now(); 
 async function serverSimulationLoop() { 
     const currentTime = performance.now();
     const deltaTimeMs = currentTime - lastSimTime;
@@ -864,6 +1037,7 @@ async function serverSimulationLoop() {
     if (nowMonth !== prevMonth) {
         await calculateMonthlyMaintenance(); 
         await saveGlobalStats(); 
+        updateStationDemand(); 
     }
     
     const trainPositions = [];
@@ -874,13 +1048,14 @@ async function serverSimulationLoop() {
             line.runSimulation(gameDeltaSeconds); 
         });
         
-        user.vehicles.forEach(v => {
+        user.vehicles.filter(v => v.status !== 'Idle').forEach(v => { 
             trainPositions.push({
                 id: v.id,
                 owner: user.userId,
                 latlng: [v.currentLat, v.currentLng], 
                 color: v.data.color,
-                status: v.status // 状態をクライアントに送信
+                status: v.status,
+                crowdFactor: v.crowdFactor 
             });
         });
 
@@ -894,10 +1069,33 @@ async function serverSimulationLoop() {
         if (user.socketId) {
             io.to(user.socketId).emit('updateUserState', {
                 money: user.money,
-                vehicles: user.vehicles.map(v => ({ id: v.id, data: v.data })), 
+                vehicles: user.vehicles.map(v => ({ id: v.id, dataKey: Object.keys(VehicleData).find(key => VehicleData[key] === v.data), lineId: v.lineId })), 
+                lineConstructionCost: user.lineConstructionCost, // ★追加: 概算コストを送信
             });
         }
     });
+    
+    if (currentTime - lastDbUpdateTime > 1000) { 
+        const vehicleUpdatePromises = [];
+        Object.values(ServerGame.users).forEach(user => {
+            user.vehicles.forEach(v => {
+                vehicleUpdatePromises.push(VehicleModel.updateOne(
+                    { id: v.id },
+                    { $set: { 
+                        positionKm: v.positionKm, 
+                        status: v.status, 
+                        isReversed: v.isReversed, 
+                        stopTimer: v.stopTimer,
+                        currentLat: v.currentLat,
+                        currentLng: v.currentLng,
+                        lineId: v.lineId, 
+                    } }
+                ));
+            });
+        });
+        await Promise.all(vehicleUpdatePromises);
+        lastDbUpdateTime = currentTime;
+    }
 
     io.emit('gameUpdate', {
         time: gameTime.toISOString(),
@@ -906,7 +1104,8 @@ async function serverSimulationLoop() {
             timeScale: ServerGame.globalStats.timeScale,
             stationsCount: ServerGame.globalStats.stations.length,
             lastMonthlyMaintenance: ServerGame.globalStats.lastMonthlyMaintenance,
-        }
+        },
+        stations: ServerGame.globalStats.stations.map(s => ({ id: s.id, demand: s.demand })) 
     });
     
     io.emit('rankingUpdate', await calculateRanking()); 
@@ -915,28 +1114,33 @@ async function serverSimulationLoop() {
 // D. ExpressとSocket.IOのセットアップ
 // =================================================================
 app.use(cookieParser());
-app.use(express.static(path.join(__dirname, 'public'))); // publicフォルダにindex.htmlを配置
+app.use(express.static(path.join(__dirname, 'public'))); 
 app.post('/login', express.json(), async (req, res) => {
+    // ... (省略: loginロジックは変更なし)
     const { username, password } = req.body;
     if (!username || username.length < 3 || !password) {
         return res.status(400).send({ message: "ユーザー名とパスワードを入力してください。" });
     }
     
     try {
-        const userRow = await UserModel.findOne({ userId: username }).lean();
+        let userRow = await UserModel.findOne({ userId: username }).lean();
         
         if (userRow) {
             if (userRow.password !== password) {
                 return res.status(401).send({ message: "パスワードが違います。" });
             }
         } else {
+            const userCount = await UserModel.countDocuments({});
+            const lineColorIndex = userCount % LINE_COLORS.length;
+            
             await UserModel.create({
                 userId: username,
                 password: password,
                 money: 5000000000,
-                totalConstructionCost: 0
+                totalConstructionCost: 0,
+                lineColorIndex: lineColorIndex,
             });
-            console.log(`新規ユーザー登録: ${username}`);
+            console.log(`新規ユーザー登録: ${username} (色インデックス: ${lineColorIndex})`);
         }
     } catch (e) {
         console.error("ユーザー認証/登録エラー:", e);
@@ -977,16 +1181,39 @@ io.on('connection', (socket) => {
             totalConstructionCost: userState.totalConstructionCost,
             establishedLines: clientLines, 
             allLines: allClientLines, 
-            vehicles: userState.vehicles.map(v => ({ id: v.id, data: v.data })), 
+            vehicles: userState.vehicles.map(v => ({ id: v.id, dataKey: Object.keys(VehicleData).find(key => VehicleData[key] === v.data), lineId: v.lineId })), 
             stations: ServerGame.globalStats.stations.map(s => ({ 
-                id: s.id, latlng: [s.lat, s.lng], ownerId: s.ownerId, type: s.type, capacity: s.capacity, name: s.name 
+                id: s.id, latlng: [s.lat, s.lng], ownerId: s.ownerId, type: s.type, capacity: s.capacity, name: s.name, demand: s.demand 
             })), 
             vehicleData: ServerGame.VehicleData,
+            lineConstructionCost: userState.lineConstructionCost, // ★追加: 概算コストを送信
         });
     });
     
-    // ★変更: buildStationを非同期に変更
+    // ★追加: 路線建設コスト計算要求ハンドラ
+    socket.on('calculateLineCost', (data) => {
+        if (!userId || data.stationCoords.length < 2) return;
+        
+        const user = ServerGame.users[userId];
+        let totalCost = 0;
+        
+        for (let i = 1; i < data.stationCoords.length; i++) {
+            const startCoord = data.stationCoords[i-1];
+            const endCoord = data.stationCoords[i];
+            const { cost: segCost } = calculateConstructionCost(startCoord, endCoord, data.trackType);
+            totalCost += segCost;
+        }
+        
+        user.lineConstructionCost = totalCost;
+        
+        // クライアントに概算コストを返信
+        socket.emit('updateUserState', {
+            lineConstructionCost: totalCost
+        });
+    });
+    
     socket.on('buildStation', async (data) => {
+        // ... (省略: buildStationロジックは変更なし)
         if (!userId) return;
         const user = ServerGame.users[userId];
         const latlng = [data.latlng.lat, data.latlng.lng];
@@ -1015,7 +1242,6 @@ io.on('connection', (socket) => {
             const stationId = ServerGame.globalStats.nextStationId++;
             await saveGlobalStats();
             
-            // ★変更: 駅名を非同期で生成 (Nominatimを使用)
             const newStationName = await generateRegionalStationName(latlng[0], latlng[1]);
             
             const newStation = new ServerStation(stationId, latlng, userId, 'Small', newStationName); 
@@ -1038,11 +1264,11 @@ io.on('connection', (socket) => {
             await saveUserFinancials(user.userId, user.money, user.totalConstructionCost);
             
             io.emit('stationBuilt', { 
-                latlng: data.latlng, id: newStation.id, ownerId: userId, type: newStation.type, capacity: newStation.capacity, name: newStation.name 
+                latlng: data.latlng, id: newStation.id, ownerId: userId, type: newStation.type, capacity: newStation.capacity, name: newStation.name, demand: newStation.demand 
             });
             socket.emit('updateUserState', { 
                 money: user.money,
-                vehicles: user.vehicles.map(v => ({ id: v.id, data: v.data })), 
+                vehicles: user.vehicles.map(v => ({ id: v.id, dataKey: Object.keys(VehicleData).find(key => VehicleData[key] === v.data), lineId: v.lineId })),
             });
         } catch (error) {
             console.error("buildStation error:", error);
@@ -1051,6 +1277,7 @@ io.on('connection', (socket) => {
     });
     
     socket.on('upgradeStation', async (data) => {
+        // ... (省略: upgradeStationロジックは変更なし)
         if (!userId) return;
         
         const result = await upgradeStation(userId, data.stationId, data.newType, data.cost);
@@ -1066,7 +1293,7 @@ io.on('connection', (socket) => {
             const user = ServerGame.users[userId];
             socket.emit('updateUserState', { 
                 money: user.money,
-                vehicles: user.vehicles.map(v => ({ id: v.id, data: v.data })), 
+                vehicles: user.vehicles.map(v => ({ id: v.id, dataKey: Object.keys(VehicleData).find(key => VehicleData[key] === v.data), lineId: v.lineId })),
             });
             socket.emit('info', result.message);
         } else {
@@ -1074,14 +1301,13 @@ io.on('connection', (socket) => {
         }
     });
     
-    // ★変更: 駅リネームイベントハンドラ
     socket.on('renameStation', async (data) => {
+        // ... (省略: renameStationロジックは変更なし)
         if (!userId) return;
         
         const result = await renameStation(userId, data.stationId, data.newName);
         
         if (result.success) {
-            // 全クライアントに駅名変更を通知
             io.emit('stationRenamed', { 
                 id: data.stationId, 
                 newName: result.newName 
@@ -1093,13 +1319,14 @@ io.on('connection', (socket) => {
     });
 
     socket.on('buildLine', async (data) => {
+        // ... (省略: buildLineロジックは変更なし)
         if (!userId || data.stationCoords.length < 2) return;
         
         const user = ServerGame.users[userId];
         const lineId = ServerGame.globalStats.nextLineId++;
         await saveGlobalStats(); 
         
-        const lineColor = LINE_COLORS[lineId % LINE_COLORS.length];
+        const lineColor = LINE_COLORS[user.lineColorIndex % LINE_COLORS.length];
         
         let totalCost = 0;
         let totalLengthKm = 0;
@@ -1116,7 +1343,13 @@ io.on('connection', (socket) => {
         try {
             user.money -= totalCost;
             user.totalConstructionCost += totalCost;
+            
+            user.lineColorIndex = (user.lineColorIndex + 1) % LINE_COLORS.length;
+            await UserModel.updateOne({ userId: userId }, { $set: { lineColorIndex: user.lineColorIndex } });
+            
             await saveUserFinancials(user.userId, user.money, user.totalConstructionCost);
+            
+            user.lineConstructionCost = 0; // 建設完了でリセット
 
             const lineStations = data.stationCoords.map(coord => 
                 ServerGame.globalStats.stations.find(s => s.latlng[0] === coord[0] && s.latlng[1] === coord[1])
@@ -1163,7 +1396,8 @@ io.on('connection', (socket) => {
                     coords: line.coords, color: line.color, 
                     trackType: line.trackType, cost: line.cost 
                 })),
-                vehicles: user.vehicles.map(v => ({ id: v.id, data: v.data })), 
+                vehicles: user.vehicles.map(v => ({ id: v.id, dataKey: Object.keys(VehicleData).find(key => VehicleData[key] === v.data), lineId: v.lineId })),
+                lineConstructionCost: user.lineConstructionCost,
             });
         } catch (error) {
             console.error("buildLine error:", error);
@@ -1171,6 +1405,7 @@ io.on('connection', (socket) => {
         }
     });
     socket.on('buyVehicle', async (data) => {
+        // ... (省略: buyVehicleロジックは変更なし)
         if (!userId) return;
         
         const user = ServerGame.users[userId];
@@ -1181,15 +1416,53 @@ io.on('connection', (socket) => {
             if (result.success) {
                 socket.emit('updateUserState', {
                     money: user.money,
-                    vehicles: user.vehicles.map(v => ({ id: v.id, data: v.data })),
+                    vehicles: user.vehicles.map(v => ({ id: v.id, dataKey: Object.keys(VehicleData).find(key => VehicleData[key] === v.data), lineId: v.lineId })),
                 });
+                socket.emit('info', `車両 #${result.vehicle.id} (${result.vehicle.data.name}) を購入し、Line ${data.lineId}に割り当てました。`);
             } else {
                 socket.emit('error', `車両購入失敗: ${result.message}`);
             }
         }
     });
     
+    socket.on('sellVehicle', async (data) => {
+        // ... (省略: sellVehicleロジックは変更なし)
+        if (!userId) return;
+        
+        const result = await sellVehicle(userId, data.vehicleId);
+        
+        if (result.success) {
+            const user = ServerGame.users[userId];
+            socket.emit('updateUserState', {
+                money: user.money,
+                vehicles: user.vehicles.map(v => ({ id: v.id, dataKey: Object.keys(VehicleData).find(key => VehicleData[key] === v.data), lineId: v.lineId })),
+            });
+            socket.emit('info', result.message);
+        } else {
+            socket.emit('error', result.message);
+        }
+    });
+    
+    socket.on('removeVehicleFromLine', async (data) => {
+        // ... (省略: removeVehicleFromLineロジックは変更なし)
+        if (!userId) return;
+        
+        const result = await removeVehicleFromLine(userId, data.vehicleId);
+        
+        if (result.success) {
+            const user = ServerGame.users[userId];
+            socket.emit('updateUserState', {
+                money: user.money,
+                vehicles: user.vehicles.map(v => ({ id: v.id, dataKey: Object.keys(VehicleData).find(key => VehicleData[key] === v.data), lineId: v.lineId })),
+            });
+            socket.emit('info', result.message);
+        } else {
+            socket.emit('error', result.message);
+        }
+    });
+    
     socket.on('dismantleLine', async (data) => {
+        // ... (省略: dismantleLineロジックは変更なし)
         if (!userId) return;
         
         const result = await dismantleLine(userId, data.lineId); 
@@ -1202,7 +1475,7 @@ io.on('connection', (socket) => {
                 money: user.money,
                 totalConstructionCost: user.totalConstructionCost,
                 establishedLines: user.establishedLines.map(l => ({ id: l.id, ownerId: l.ownerId, coords: l.coords, color: l.color, trackType: l.trackType, cost: l.cost })),
-                vehicles: user.vehicles.map(v => ({ id: v.id, data: v.data })),
+                vehicles: user.vehicles.map(v => ({ id: v.id, dataKey: Object.keys(VehicleData).find(key => VehicleData[key] === v.data), lineId: v.lineId })),
             });
             socket.emit('info', result.message);
         } else {
@@ -1210,6 +1483,7 @@ io.on('connection', (socket) => {
         }
     });
     socket.on('dismantleStation', async (data) => {
+        // ... (省略: dismantleStationロジックは変更なし)
         if (!userId) return;
         
         const result = await dismantleStation(userId, data.stationId); 
@@ -1221,7 +1495,7 @@ io.on('connection', (socket) => {
             socket.emit('updateUserState', {
                 money: user.money,
                 totalConstructionCost: user.totalConstructionCost,
-                vehicles: user.vehicles.map(v => ({ id: v.id, data: v.data })),
+                vehicles: user.vehicles.map(v => ({ id: v.id, dataKey: Object.keys(VehicleData).find(key => VehicleData[key] === v.data), lineId: v.lineId })),
             });
             socket.emit('info', result.message);
         } else {
@@ -1236,6 +1510,7 @@ io.on('connection', (socket) => {
 // E. サーバー起動ロジック
 // =================================================================
 async function initializeDatabase() {
+    // ... (省略: initializeDatabaseロジックは変更なし)
     const count = await GlobalStatsModel.countDocuments({});
     if (count === 0) {
         await GlobalStatsModel.create({
@@ -1249,6 +1524,7 @@ async function initializeDatabase() {
     }
 }
 async function loadGlobalStats() {
+    // ... (省略: loadGlobalStatsロジックは変更なし)
     const statsRow = await GlobalStatsModel.findById(1).lean();
     if (statsRow) {
         ServerGame.globalStats.gameTime = new Date(statsRow.gameTime);
@@ -1260,21 +1536,17 @@ async function loadGlobalStats() {
 
     const stationsRes = await StationModel.find({}).lean();
     ServerGame.globalStats.stations = stationsRes.map(row => {
-        // ★変更: 既存の駅の命名規則をチェックし、古い名前であれば仮の名前を設定
         let stationName = row.name;
         if (!stationName || stationName.startsWith("駅 ") || stationName.includes("新駅") || stationName.includes("仮駅名")) { 
-             // 既存の駅名は変更しないが、仮の名前の場合はDBからロードされた名前を優先
              stationName = row.name || `仮駅名 ${row.id}`;
         }
         
-        const station = new ServerStation(row.id, [row.lat, row.lng], row.ownerId, row.type || 'Small', stationName); 
-        station.demand = row.demand;
+        const station = new ServerStation(row.id, [row.lat, row.lng], row.ownerId, row.type || 'Small', stationName, row.demand); 
         station.lineConnections = row.lineConnections;
         station.capacity = station.getCapacityByType(station.type); 
         return station;
     });
     
-    // ★変更: 既存の仮駅名を持つ駅に対して、非同期で地名を取得し更新 (Nominatimを使用)
     const updatePromises = ServerGame.globalStats.stations
         .filter(s => s.name.startsWith("仮駅名"))
         .map(async (station) => {
