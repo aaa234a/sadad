@@ -26,10 +26,18 @@ if (!MONGO_URI) {
     process.exit(1);
 }
 
-// =================================================================
-// 0. データベース接続とMongooseスキーマ定義 (変更なし)
-// =================================================================
-// ... (Mongoose Schemas の定義は省略 - 変更なし)
+async function connectDB() {
+    try {
+        await mongoose.connect(MONGO_URI);
+        console.log("Connected to MongoDB using Mongoose.");
+    } catch (err) {
+        console.error("FATAL ERROR: MongoDB connection failed:", err.message);
+        process.exit(1);
+    }
+}
+
+// --- Mongoose Schemas ---
+
 const GlobalStatsSchema = new mongoose.Schema({
     _id: { type: Number, default: 1 },
     gameTime: { type: Date, default: Date.now },
@@ -98,7 +106,7 @@ const ChatModel = mongoose.model('Chat', ChatSchema);
 
 
 // =================================================================
-// A. サーバーサイド・ゲーム定数とユーティリティ (変更なし)
+// A. サーバーサイド・ゲーム定数とユーティリティ
 // =================================================================
 const STATION_COST = 50000000;
 const VEHICLE_BASE_COST = 8000000;
@@ -115,17 +123,16 @@ const VehicleData = {
 };
 
 // =================================================================
-// ★ GeoTIFF人口データ処理ロジック (修正)
+// ★ GeoTIFF人口データ処理ロジック
 // =================================================================
-const WORLDPOP_URL = 'https://data.worldpop.org/GIS/Population/Global_2015_2030/R2025A/2025/0_Mosaicked/v1/1km_ua/constrained/global_pop_2025_CN_1km_R2025A_UA_v1.tif';
-
+const WORLDPOP_URL = 'https://drive.usercontent.google.com/download?id=1RXhkeCoPf5gDpz7kO40wn4x4646sXNqq&export=download&authuser=0&confirm=t&uuid=ad389895-3ad2-4345-a5b8-fdfc6a2bcdd6&at=AKSUxGN0g5r6LpggqZbcglzOt8PN:1759388822962';
 let tiffImage = null;
 let geoKeyDirectory = null;
 let pixelScale = null;
 
-// WorldPopのデータは通常WGS84（EPSG:4326）ですが、念のため座標変換を定義
-// WGS84 to WGS84 は不要だが、GeoTIFFのCRSが異なる場合に備えて残す
-// proj4.default('EPSG:4326', 'EPSG:4326');
+// EPSG:3857 (Web Mercator) から EPSG:4326 (WGS84: 緯度経度) への変換を定義
+// GeoTIFFがEPSG:3857の場合に必要
+const projection = proj4.default('EPSG:3857', 'EPSG:4326');
 
 async function loadPopulationTiff() {
     try {
@@ -162,18 +169,14 @@ async function getPopulationDensityFromCoords(lat, lng) {
     try {
         // 1. WGS84 (lat, lng) を GeoTIFFのCRSに変換
         let x, y;
-        const targetCRS = geoKeyDirectory[1024]; // GeoTIFFのCRSを取得
         
-        if (targetCRS && targetCRS !== 4326) {
-             // GeoTIFFのCRSがWGS84以外の場合、変換が必要
-             const fromProj = 'EPSG:4326';
-             const toProj = `EPSG:${targetCRS}`;
-             
-             // proj4に変換を定義
-             const converter = proj4.default(fromProj, toProj);
-             [x, y] = converter.forward([lng, lat]);
+        // GeoTIFFのCRSがWGS84 (EPSG:4326) の場合、変換は不要
+        // GeoTIFFのCRSがWeb Mercator (EPSG:3857) の場合、変換が必要
+        // 実際のGeoTIFFのCRSに応じて調整してください。ここでは3857を仮定
+        if (geoKeyDirectory && geoKeyDirectory[1024] === 3857) {
+             [x, y] = proj4.default('EPSG:4326', 'EPSG:3857', [lng, lat]);
         } else {
-             // GeoTIFFがWGS84（EPSG:4326）の場合
+             // WGS84を仮定
              x = lng;
              y = lat;
         }
@@ -191,12 +194,15 @@ async function getPopulationDensityFromCoords(lat, lng) {
             return 50; // 範囲外は低人口密度
         }
 
-        // 4. ピクセル値（人口総数）を読み取り
+        // 4. ピクセル値（人口密度）を読み取り
+        // readRastersは非同期操作
         const rasters = await tiffImage.readRasters({ window: [px, py, px + 1, py + 1] });
         
         if (rasters && rasters.length > 0 && rasters[0].length > 0) {
             const population = rasters[0][0];
-            // WorldPopのデータはメッシュ内の人口総数（人）。1kmメッシュなので、これが人口密度（人/km²）となる。
+            // 人口データは「人口総数」または「人口密度」のどちらか
+            // WorldPopのデータは通常、メッシュ内の人口総数（人）
+            // 1kmメッシュなので、この値が「人口密度（人/km²）」とほぼ同義になる
             return Math.max(1, Math.round(population));
         }
 
@@ -208,7 +214,7 @@ async function getPopulationDensityFromCoords(lat, lng) {
 }
 
 // =================================================================
-// ★ 人口密度に基づいた需要計算関数 (変更なし)
+// ★ 人口密度に基づいた需要計算関数
 // =================================================================
 /**
  * 人口密度に基づいた需要を計算する
@@ -217,6 +223,7 @@ async function getPopulationDensityFromCoords(lat, lng) {
  */
 function calculateDemandFromPopulationDensity(populationDensity) {
     // 旅客需要: 人口密度 (人/km²) を基に、駅の月間需要を計算
+    // 1km²あたりの人口密度から、駅の商圏（例: 2km²）の人口を推定し、そのうちの一定割合（例: 1%）が月間利用すると仮定
     const catchmentAreaKm2 = 2;
     const monthlyUseRate = 0.01;
     
@@ -239,7 +246,7 @@ function calculateDemandFromPopulationDensity(populationDensity) {
 }
 
 
-// ... (generateRegionalStationName, ServerStation, ServerVehicle, ServerLineManagerなどの定義は省略 - 変更なし)
+// ★修正: Nominatim APIからの地名取得関数 (市区町村名も取得)
 async function getAddressFromCoords(lat, lng) {
     // OpenStreetMap Nominatim API (逆ジオコーディング)
     const url = `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lng}&format=json&accept-language=ja&zoom=16`;
@@ -276,6 +283,7 @@ async function getAddressFromCoords(lat, lng) {
     }
 }
 
+// ★修正: 駅名生成ロジックを非同期に戻し、Nominatimを使用
 async function generateRegionalStationName(lat, lng) {
     const addressData = await getAddressFromCoords(lat, lng);
     
@@ -304,7 +312,14 @@ async function generateRegionalStationName(lat, lng) {
     return `${area}${suffix}駅`;
 }
 
+
+// ... (省略: getElevation, getDistanceKm, calculateConstructionCost)
+
+// =================================================================
+// B. サーバーサイド・クラス定義 (変更なし)
+// =================================================================
 class ServerStation {
+    // ... (前回のコードと同じ)
     constructor(id, latlng, ownerId, type = 'Small', initialName = null, initialDemand = null) {
         this.id = id;
         this.latlng = latlng;
@@ -337,47 +352,256 @@ class ServerStation {
     get lat() { return this.latlng[0]; }
     get lng() { return this.latlng[1]; }
 }
-// ... (ServerVehicle, ServerLineManager, ゲームロジック関数は省略 - 変更なし)
-function getDistanceKm(coord1, coord2) {
-    const lngLat1 = [coord1[1], coord1[0]];
-    const lngLat2 = [coord2[1], coord2[0]];
-    return turf.distance(turf.point(lngLat1), turf.point(lngLat2), {units: 'kilometers'});
-}
-function getElevation(lat, lng) {
-    const TOKYO_BAY_LAT = 35.6;
-    const TOKYO_BAY_LNG = 139.7;
-    const tokyoDist = Math.sqrt((lat - TOKYO_BAY_LAT) ** 2 + (lng - TOKYO_BAY_LNG) ** 2);
-    let elevation = 100 * Math.exp(-tokyoDist * 5) + (Math.random() * 5); 
-    if (lng < 139.7) { elevation += 10 + (139.7 - lng) * 50; }
-    if (lat < 35.6) { elevation += 10 + (35.6 - lat) * 50; }
-    return Math.round(Math.min(3000, Math.max(0, elevation)));
-}
-function calculateConstructionCost(coord1, coord2, trackType) {
-    const distanceKm = getDistanceKm(coord1, coord2);
-    if (distanceKm === 0) return { cost: 0, lengthKm: 0 };
-    const lengthM = distanceKm * 1000;
-    const elev1 = getElevation(coord1[0], coord1[1]);
-    const elev2 = getElevation(coord2[0], coord2[1]);
-    const elevationDiff = Math.abs(elev1 - elev2);
-    let baseCost = distanceKm * 2500000;
-    
-    if (trackType === 'double') baseCost *= 1.8;
-    else if (trackType === 'linear') baseCost *= 5.0; 
-    else if (trackType === 'tram') baseCost *= 0.8; 
-    
-    const slope = elevationDiff / lengthM;
-    let slopeMultiplier = 1;
-    if (slope > 0.1) slopeMultiplier = Math.pow(slope * 15, 3);
-    else if (slope > 0.05) slopeMultiplier = Math.pow(slope * 10, 2);
-    else if (slope > 0.03) slopeMultiplier = slope * 5;
-    
-    const slopeCost = slopeMultiplier * 500000 * lengthM; 
-    const highElevationCost = Math.max(0, (elev1 + elev2) / 2 - 100) * 5000;
-    const totalCost = baseCost + slopeCost + highElevationCost;
-    return { cost: Math.round(totalCost), lengthKm: distanceKm };
-}
+class ServerVehicle {
+    // ... (前回のコードと同じ)
+    constructor(id, line, data) {
+        this.id = id;
+        this.lineId = line.id;
+        this.ownerId = line.ownerId;
+        this.data = data;
+        this.coords = line.coords;
+        this.stations = line.stations; 
+        
+        this.positionKm = 0; 
+        this.status = 'Running'; 
+        this.isReversed = false; 
+        this.stopTimer = 0; 
+        this.currentLat = this.coords[0][0];
+        this.currentLng = this.coords[0][1];
+        this.waitingForStationKm = -1; 
 
-// ... (ServerGame, DB操作関数、ゲームロジック関数は省略 - 変更なし)
+        this.totalRouteKm = [0];
+        for(let i = 1; i < this.coords.length; i++) {
+            const segmentKm = getDistanceKm(this.coords[i-1], this.coords[i]);
+            this.totalRouteKm.push(this.totalRouteKm[i-1] + segmentKm);
+        }
+        this.routeLength = this.totalRouteKm[this.totalRouteKm.length - 1];
+    }
+
+    getStationKm(station) {
+        const COORD_TOLERANCE = 0.000001; 
+        for(let i = 0; i < this.coords.length; i++) {
+            if (Math.abs(this.coords[i][0] - station.latlng[0]) < COORD_TOLERANCE && 
+                Math.abs(this.coords[i][1] - station.latlng[1]) < COORD_TOLERANCE) {
+                return this.totalRouteKm[i];
+            }
+        }
+        return -1; 
+    }
+
+    move(gameDeltaSeconds) {
+        if (this.status === 'Stopping') {
+            this.stopTimer -= gameDeltaSeconds;
+            if (this.stopTimer <= 0) {
+                const currentStation = this.stations.find(s => this.getStationKm(s) === this.positionKm);
+                if (currentStation) {
+                    currentStation.occupyingVehicles.delete(this.id);
+                }
+                this.status = 'Running';
+            }
+            return;
+        }
+        
+        if (this.status === 'Waiting') {
+            const nextStation = this.stations.find(s => this.getStationKm(s) === this.waitingForStationKm);
+            if (nextStation && nextStation.occupyingVehicles.size < nextStation.capacity) {
+                this.status = 'Running';
+                this.waitingForStationKm = -1;
+            } else {
+                return; 
+            }
+        }
+
+        if (this.status !== 'Running') return;
+        
+        let nextStation = null;
+        let minDistance = Infinity;
+        
+        this.stations.forEach(station => {
+            const stationKm = this.getStationKm(station);
+            if (stationKm === -1) return;
+            
+            const distance = this.isReversed ? this.positionKm - stationKm : stationKm - this.positionKm;
+            
+            if (distance > 0 && distance < minDistance) {
+                nextStation = station;
+                minDistance = distance;
+            }
+        });
+        
+        const safetyDistance = 1.0; // 500メートル手前でチェック
+
+        if (nextStation) {
+            const nextStationKm = this.getStationKm(nextStation);
+            const distanceToStation = this.isReversed ? this.positionKm - nextStationKm : nextStationKm - this.positionKm;
+            
+            if (distanceToStation < safetyDistance && distanceToStation > 0) {
+                if (nextStation.occupyingVehicles.size >= nextStation.capacity) {
+                    this.status = 'Waiting';
+                    this.waitingForStationKm = nextStationKm; 
+                    const stopPositionKm = nextStationKm - (this.isReversed ? -safetyDistance : safetyDistance);
+                    this.positionKm = stopPositionKm;
+                    this.updateCoordinates();
+                    return;
+                }
+            }
+        }
+
+        const speedKms = this.data.maxSpeedKmH / 3600; 
+        const travelDistanceKm = speedKms * gameDeltaSeconds; 
+        
+        const direction = this.isReversed ? -1 : 1;
+        this.positionKm += travelDistanceKm * direction;
+
+        if (this.positionKm >= this.routeLength) {
+            this.positionKm = this.routeLength;
+            this.isReversed = true;
+            this.handleStationArrival(this.stations[this.stations.length-1]);
+            return;
+        } else if (this.positionKm <= 0) {
+            this.positionKm = 0;
+            this.isReversed = false;
+            this.handleStationArrival(this.stations[0]);
+            return;
+        }
+
+        this.updateCoordinates();
+        this.checkStationArrival();
+    }
+    
+    updateCoordinates() {
+        let targetKm = this.positionKm;
+        
+        let idx = this.totalRouteKm.findIndex(km => km > targetKm);
+        if (idx === -1) idx = this.coords.length - 1; 
+        
+        let startKm = this.totalRouteKm[idx - 1] || 0;
+        let endKm = this.totalRouteKm[idx];
+        let segmentLength = endKm - startKm;
+        if (segmentLength === 0) return; 
+        let progress = (targetKm - startKm) / segmentLength;
+        let prevCoord = this.coords[idx - 1];
+        let nextCoord = this.coords[idx];
+        this.currentLat = prevCoord[0] * (1 - progress) + nextCoord[0] * progress;
+        this.currentLng = prevCoord[1] * (1 - progress) + nextCoord[1] * progress;
+    }
+
+    checkStationArrival() {
+        const arrivalTolerance = 0.05; 
+        
+        let closestNextStation = null;
+        let minDistance = Infinity;
+        
+        this.stations.forEach(station => {
+            const stationKm = this.getStationKm(station);
+            if (stationKm === -1) return;
+            
+            const distance = this.isReversed ? this.positionKm - stationKm : stationKm - this.positionKm;
+            
+            if (distance > 0 && distance < minDistance) {
+                closestNextStation = station;
+                minDistance = distance;
+            }
+        });
+        
+        if (closestNextStation && minDistance < arrivalTolerance && this.status === 'Running') {
+            const stationKm = this.getStationKm(closestNextStation);
+            this.positionKm = stationKm; 
+            this.handleStationArrival(closestNextStation);
+        }
+    }
+    
+    handleStationArrival(station) {
+        station.occupyingVehicles.add(this.id);
+        
+        this.status = 'Stopping';
+        this.stopTimer = 30; 
+        let revenue = 0;
+        const revenueMultiplier = this.data.revenueMultiplier || 1.0;
+        
+        // 収益を約半分に減らす (5000 -> 2500, 2000 -> 1000)
+        if (this.data.type === 'passenger') {
+            revenue = station.demand.passenger * this.data.capacity / 100 * 2500 * revenueMultiplier; 
+        } else if (this.data.type === 'freight') {
+            revenue = station.demand.freight * this.data.capacity / 500 * 1000 * revenueMultiplier;
+        }
+        const stationsAtLocation = ServerGame.globalStats.stations.filter(s => 
+            s.latlng[0] === station.latlng[0] && s.latlng[1] === station.latlng[1]
+        );
+        
+        const totalConnections = stationsAtLocation.flatMap(s => s.lineConnections).length;
+        
+        revenue *= (1 + Math.min(1.0, totalConnections * 0.1)); 
+        if (ServerGame.users[this.ownerId]) {
+            ServerGame.users[this.ownerId].money += Math.round(revenue);
+            ServerGame.users[this.ownerId].moneyUpdated = true; 
+        }
+    }
+}
+class ServerLineManager {
+    // ... (前回のコードと同じ)
+    constructor(id, ownerId, stations, coords, cost, lengthKm, color, trackType) {
+        this.id = id;
+        this.ownerId = ownerId;
+        this.stations = stations;
+        this.coords = coords; 
+        this.cost = cost;
+        this.lengthKm = lengthKm;
+        this.color = color;
+        this.trackType = trackType;
+        this.vehicles = [];
+    }
+    async addVehicle(vehicleKey) {
+        const data = VehicleData[vehicleKey];
+        const purchaseCost = VEHICLE_BASE_COST * data.purchaseMultiplier;
+        const user = ServerGame.users[this.ownerId];
+        if (!user || user.money < purchaseCost) {
+            return { success: false, message: '資金不足' };
+        }
+        
+        const isLinear = data.name === 'リニア';
+        
+        if (isLinear && this.trackType !== 'linear') {
+             return { success: false, message: 'リニアは専用線路が必要です' };
+        }
+        if (!isLinear && this.trackType === 'linear') {
+             return { success: false, message: 'リニア線路にはリニア以外配置できません' };
+        }
+        
+        user.money -= purchaseCost;
+        
+        const vehicleId = ServerGame.globalStats.nextVehicleId++;
+        await saveGlobalStats();
+        
+        const newVehicle = new ServerVehicle(vehicleId, this, data); 
+        this.vehicles.push(newVehicle);
+        user.vehicles.push(newVehicle);
+        
+        const dataKey = Object.keys(VehicleData).find(key => VehicleData[key] === newVehicle.data);
+        await VehicleModel.create({
+            id: newVehicle.id,
+            lineId: newVehicle.lineId,
+            ownerId: newVehicle.ownerId,
+            dataKey: dataKey,
+            positionKm: newVehicle.positionKm,
+            status: newVehicle.status,
+            isReversed: newVehicle.isReversed, 
+            stopTimer: newVehicle.stopTimer,
+            currentLat: newVehicle.currentLat,
+            currentLng: newVehicle.currentLng
+        });
+        
+        await saveUserFinancials(user.userId, user.money, user.totalConstructionCost);
+        
+        return { success: true, vehicle: newVehicle };
+    }
+    runSimulation(gameDeltaSeconds) {
+        this.vehicles.forEach(v => v.move(gameDeltaSeconds));
+    }
+}
+// =================================================================
+// C. サーバーサイド・ゲーム状態管理 (メモリ内キャッシュ)
+// =================================================================
 const ServerGame = {
     users: {}, 
     globalStats: {
@@ -392,6 +616,9 @@ const ServerGame = {
     },
     VehicleData: VehicleData,
 };
+// =================================================================
+// C-1. DB操作関数 (Mongoose)
+// =================================================================
 async function saveGlobalStats() {
     const stats = ServerGame.globalStats;
     await GlobalStatsModel.updateOne({ _id: 1 }, {
@@ -404,15 +631,7 @@ async function saveGlobalStats() {
         }
     }, { upsert: true }); 
 }
-async function connectDB() {
-    try {
-        await mongoose.connect(MONGO_URI);
-        console.log("Connected to MongoDB using Mongoose.");
-    } catch (err) {
-        console.error("FATAL ERROR: MongoDB connection failed:", err.message);
-        process.exit(1);
-    }
-}
+
 async function saveUserFinancials(userId, money, totalConstructionCost) {
     await UserModel.updateOne({ userId: userId }, {
         $set: {
@@ -421,6 +640,7 @@ async function saveUserFinancials(userId, money, totalConstructionCost) {
         }
     });
 }
+
 async function loadUserData(userId) {
     const userRow = await UserModel.findOne({ userId: userId }).lean();
     if (!userRow) return null;
@@ -498,6 +718,10 @@ async function renameStation(userId, stationId, newName) {
     };
 }
 
+
+// =================================================================
+// C-2. ゲームロジック関数 (変更なし)
+// =================================================================
 async function calculateMonthlyMaintenance() {
     let totalCost = 0;
     
@@ -542,6 +766,7 @@ async function calculateRanking() {
         .sort((a, b) => b.score - a.score)
         .slice(0, 10);
 }
+
 async function dismantleLine(userId, lineId) {
     const user = ServerGame.users[userId];
     if (!user) return { success: false, message: "ユーザーが見つかりません。" };
@@ -649,6 +874,7 @@ async function upgradeStation(userId, stationId, newType, cost) {
         message: `${globalStation.name} を ${newType} 駅にアップグレードしました。`
     };
 }
+
 
 let lastSimTime = performance.now();
 async function serverSimulationLoop() { 
