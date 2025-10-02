@@ -313,6 +313,44 @@ async function generateRegionalStationName(lat, lng) {
 
 
 // ... (省略: getElevation, getDistanceKm, calculateConstructionCost)
+function getDistanceKm(coord1, coord2) {
+    const lngLat1 = [coord1[1], coord1[0]];
+    const lngLat2 = [coord2[1], coord2[0]];
+    return turf.distance(turf.point(lngLat1), turf.point(lngLat2), {units: 'kilometers'});
+}
+function getElevation(lat, lng) {
+    const TOKYO_BAY_LAT = 35.6;
+    const TOKYO_BAY_LNG = 139.7;
+    const tokyoDist = Math.sqrt((lat - TOKYO_BAY_LAT) ** 2 + (lng - TOKYO_BAY_LNG) ** 2);
+    let elevation = 100 * Math.exp(-tokyoDist * 5) + (Math.random() * 5); 
+    if (lng < 139.7) { elevation += 10 + (139.7 - lng) * 50; }
+    if (lat < 35.6) { elevation += 10 + (35.6 - lat) * 50; }
+    return Math.round(Math.min(3000, Math.max(0, elevation)));
+}
+function calculateConstructionCost(coord1, coord2, trackType) {
+    const distanceKm = getDistanceKm(coord1, coord2);
+    if (distanceKm === 0) return { cost: 0, lengthKm: 0 };
+    const lengthM = distanceKm * 1000;
+    const elev1 = getElevation(coord1[0], coord1[1]);
+    const elev2 = getElevation(coord2[0], coord2[1]);
+    const elevationDiff = Math.abs(elev1 - elev2);
+    let baseCost = distanceKm * 2500000;
+    
+    if (trackType === 'double') baseCost *= 1.8;
+    else if (trackType === 'linear') baseCost *= 5.0; 
+    else if (trackType === 'tram') baseCost *= 0.8; 
+    
+    const slope = elevationDiff / lengthM;
+    let slopeMultiplier = 1;
+    if (slope > 0.1) slopeMultiplier = Math.pow(slope * 15, 3);
+    else if (slope > 0.05) slopeMultiplier = Math.pow(slope * 10, 2);
+    else if (slope > 0.03) slopeMultiplier = slope * 5;
+    
+    const slopeCost = slopeMultiplier * 500000 * lengthM; 
+    const highElevationCost = Math.max(0, (elev1 + elev2) / 2 - 100) * 5000;
+    const totalCost = baseCost + slopeCost + highElevationCost;
+    return { cost: Math.round(totalCost), lengthKm: distanceKm };
+}
 
 // =================================================================
 // B. サーバーサイド・クラス定義 (変更なし)
