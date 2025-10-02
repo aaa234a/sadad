@@ -107,7 +107,7 @@ const VehicleData = {
 // =================================================================
 // ★ GeoTIFF人口データ処理ロジック (修正)
 // =================================================================
-const WORLDPOP_URL = 'https://drive.usercontent.google.com/download?id=1RXhkeCoPf5gDpz7kO40wn4x4646sXNqq&export=download&authuser=0&confirm=t&uuid=ad389895-3ad2-4345-a5b8-fdfc6a2bcdd6&at=AKSUxGN0g5r6LpggqZbcglzOt8PN:1759388822962';
+const WORLDPOP_URL = 'https://data.worldpop.org/GIS/Population/Global_2015_2030/R2025A/2025/0_Mosaicked/v1/1km_ua/constrained/global_pop_2025_CN_1km_R2025A_UA_v1.tif';
 
 let tiffImage = null;
 let geoKeyDirectory = null;
@@ -394,7 +394,15 @@ async function saveGlobalStats() {
         }
     }, { upsert: true }); 
 }
-
+async function connectDB() {
+    try {
+        await mongoose.connect(MONGO_URI);
+        console.log("Connected to MongoDB using Mongoose.");
+    } catch (err) {
+        console.error("FATAL ERROR: MongoDB connection failed:", err.message);
+        process.exit(1);
+    }
+}
 async function saveUserFinancials(userId, money, totalConstructionCost) {
     await UserModel.updateOne({ userId: userId }, {
         $set: {
