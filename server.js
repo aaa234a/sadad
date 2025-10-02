@@ -7,7 +7,7 @@ const path = require('path');
 const turf = require('@turf/turf'); 
 const mongoose = require('mongoose');
 const geolib = require('geolib'); 
-const axios = require('axios'); // ★変更: axiosを使用
+const axios = require('axios'); 
 require('dotenv').config();
 
 const app = express();
@@ -95,6 +95,15 @@ const VehicleSchema = new mongoose.Schema({
     currentLng: Number,
 }, { collection: 'vehicles' });
 const VehicleModel = mongoose.model('Vehicle', VehicleSchema);
+
+// ★追加: チャットスキーマ
+const ChatSchema = new mongoose.Schema({
+    userId: { type: String, required: true },
+    message: { type: String, required: true },
+    timestamp: { type: Date, default: Date.now },
+}, { collection: 'chat_messages' });
+const ChatModel = mongoose.model('Chat', ChatSchema);
+
 
 // =================================================================
 // A. サーバーサイド・ゲーム定数とユーティリティ
@@ -291,14 +300,15 @@ function calculateConstructionCost(coord1, coord2, trackType) {
 // B. サーバーサイド・クラス定義
 // =================================================================
 class ServerStation {
-    // ★変更: コンストラクタを非同期にできないため、初期化ロジックを分離
-    constructor(id, latlng, ownerId, type = 'Small', initialName = null) {
+    // ★変更: demandを引数に追加
+    constructor(id, latlng, ownerId, type = 'Small', initialName = null, initialDemand = null) {
         this.id = id;
         this.latlng = latlng;
         this.ownerId = ownerId;
         // DBからロードされた名前、または仮の名前を設定
         this.name = initialName || `仮駅名 ${id}`; 
-        this.demand = { 
+        // ★変更: demandを初期化
+        this.demand = initialDemand || { 
             passenger: Math.round(50 + Math.random() * 300),
             freight: Math.round(10 + Math.random() * 100)
         };
@@ -979,10 +989,22 @@ io.on('connection', (socket) => {
             allLines: allClientLines, 
             vehicles: userState.vehicles.map(v => ({ id: v.id, data: v.data })), 
             stations: ServerGame.globalStats.stations.map(s => ({ 
-                id: s.id, latlng: [s.lat, s.lng], ownerId: s.ownerId, type: s.type, capacity: s.capacity, name: s.name 
+                id: s.id, latlng: [s.lat, s.lng], ownerId: s.ownerId, type: s.type, capacity: s.capacity, name: s.name, demand: s.demand // ★変更: demandを追加
             })), 
             vehicleData: ServerGame.VehicleData,
         });
+        
+        // ★追加: チャット履歴をロードして送信 (最新の50件)
+        const chatHistory = await ChatModel.find({})
+            .sort({ timestamp: -1 })
+            .limit(50)
+            .lean();
+            
+        socket.emit('chatHistory', chatHistory.reverse().map(msg => ({
+            userId: msg.userId,
+            message: msg.message,
+            timestamp: msg.timestamp.toISOString()
+        })));
     });
     
     // ★変更: buildStationを非同期に変更
@@ -1037,8 +1059,9 @@ io.on('connection', (socket) => {
             
             await saveUserFinancials(user.userId, user.money, user.totalConstructionCost);
             
+            // ★変更: demandを追加
             io.emit('stationBuilt', { 
-                latlng: data.latlng, id: newStation.id, ownerId: userId, type: newStation.type, capacity: newStation.capacity, name: newStation.name 
+                latlng: data.latlng, id: newStation.id, ownerId: userId, type: newStation.type, capacity: newStation.capacity, name: newStation.name, demand: newStation.demand 
             });
             socket.emit('updateUserState', { 
                 money: user.money,
@@ -1228,6 +1251,32 @@ io.on('connection', (socket) => {
             socket.emit('error', result.message);
         }
     });
+    
+    // ★追加: チャットメッセージの送信
+    socket.on('sendMessage', async (data) => {
+        if (!userId || !data.message || data.message.trim() === '') return;
+        
+        const message = data.message.trim().substring(0, 200); // 200文字に制限
+        
+        try {
+            const chatMessage = await ChatModel.create({
+                userId: userId,
+                message: message,
+                timestamp: new Date()
+            });
+            
+            // 全クライアントに新しいメッセージをブロードキャスト
+            io.emit('newMessage', {
+                userId: chatMessage.userId,
+                message: chatMessage.message,
+                timestamp: chatMessage.timestamp.toISOString()
+            });
+        } catch (error) {
+            console.error("Chat message save error:", error);
+            socket.emit('error', 'チャットメッセージの送信中にエラーが発生しました。');
+        }
+    });
+    
     socket.on('disconnect', () => {
         // ...
     });
@@ -1267,8 +1316,16 @@ async function loadGlobalStats() {
              stationName = row.name || `仮駅名 ${row.id}`;
         }
         
-        const station = new ServerStation(row.id, [row.lat, row.lng], row.ownerId, row.type || 'Small', stationName); 
-        station.demand = row.demand;
+        // ★変更: demandを渡す
+        const station = new ServerStation(
+            row.id, 
+            [row.lat, row.lng], 
+            row.ownerId, 
+            row.type || 'Small', 
+            stationName,
+            row.demand
+        ); 
+        station.demand = row.demand; 
         station.lineConnections = row.lineConnections;
         station.capacity = station.getCapacityByType(station.type); 
         return station;
