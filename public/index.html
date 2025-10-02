@@ -400,7 +400,6 @@
       const STATION_COST = 50000000;
       const VEHICLE_BASE_COST = 8000000;
       
-      // ★修正: クライアント側のコスト計算ロジックを削除し、サーバー依存とする
       const TRACK_MULTIPLIERS = {
           single: 1.0,
           double: 1.8,
@@ -408,8 +407,8 @@
           tram: 0.8
       };
 
-      let VehicleData = {}; // サーバーから受信する車両データ
-      let map; // Leafletマップインスタンス
+      let VehicleData = {}; 
+      let map; 
 
       const Game = {
         userId: null,
@@ -418,17 +417,16 @@
         establishedLines: [],
         allLines: {}, 
         stations: [],
-        vehicles: [], // ★修正: 車両IDとlineId、dataKeyのみを保持
+        vehicles: [], 
         allTrainMarkers: {}, 
         mode: "idle",
         currentTrackType: "single",
         revenueLogs: [], 
         
         _lastLineCount: 0,
-        _lastVehicleCount: 
-        _lineConstructionCost: 0, // ★追加: サーバーから受け取る概算コスト
+        _lastVehicleCount: 0, // ★修正済み
+        _lineConstructionCost: 0, 
         
-        // ★修正: サーバーから駅の需要情報を受け取った際に更新するためのマップ
         stationDemandMap: new Map(),
 
         updateStats(data) {
@@ -531,7 +529,6 @@
           this.stations.forEach((s) => s.markers.forEach(m => map.removeLayer(m)));
           this.stations = [];
           
-          // ★修正: サーバーから受信した需要情報をマップに格納
           stations.forEach(s => {
               if (s.demand) {
                   this.stationDemandMap.set(s.id, s.demand);
@@ -595,7 +592,6 @@
       let lineCandidateNodes = [];
 
       class Station {
-        // ★修正: demand引数を削除し、Game.stationDemandMapを参照するように変更
         constructor(id, latlng, map, ownerId, type = 'Small', capacity = 3, name) {
           this.id = id;
           this.latlng = latlng;
@@ -644,7 +640,6 @@
         }
 
         generatePopupContent() {
-            // ★修正: Game.stationDemandMapから需要情報を取得
             const demand = Game.stationDemandMap.get(this.id) || { passenger: 'N/A', freight: 'N/A' };
             
             let popupContent = `<b>${this.name} (ID: ${this.id})</b><br>Owner: ${this.ownerId}`;
@@ -736,7 +731,7 @@
 
         socket.on("initialState", (data) => {
           VehicleData = data.vehicleData;
-          Game._lineConstructionCost = data.lineConstructionCost || 0; // ★追加: サーバーから概算コストを受信
+          Game._lineConstructionCost = data.lineConstructionCost || 0; 
           Game.updateStats(data);
           
           if (data.allLines) {
@@ -749,7 +744,7 @@
         });
 
         socket.on("updateUserState", (data) => {
-          Game._lineConstructionCost = data.lineConstructionCost || Game._lineConstructionCost; // ★追加: サーバーから概算コストを受信
+          Game._lineConstructionCost = data.lineConstructionCost || Game._lineConstructionCost; 
           Game.updateStats(data);
           
           const currentLineCount = data.establishedLines ? data.establishedLines.length : Game._lastLineCount;
@@ -760,13 +755,17 @@
               Game._lastLineCount = currentLineCount;
               Game._lastVehicleCount = currentVehicleCount;
           }
+          
+          // 路線建設モード中にコストが更新された場合、UIを更新
+          if (Game.mode === 'track' && data.lineConstructionCost !== undefined) {
+              updateLineCostDisplay();
+          }
         });
 
         socket.on("gameUpdate", (data) => {
           Game.updateGlobalStats(data);
           updateTrainPositions(data.trainPositions);
           
-          // ★修正: 駅の需要変動を反映
           if (data.stations) {
               data.stations.forEach(sData => {
                   Game.stationDemandMap.set(sData.id, sData.demand);
@@ -778,7 +777,6 @@
               });
           }
           
-          // ★追加: 路線建設コストの更新
           if (Game.mode === 'track') {
               updateLineCostDisplay();
           }
@@ -789,7 +787,6 @@
         });
 
         socket.on("stationBuilt", (data) => {
-          // ★修正: demandをStationオブジェクトに渡さず、マップに格納
           if (data.demand) {
               Game.stationDemandMap.set(data.id, data.demand);
           }
@@ -832,7 +829,7 @@
           if (stationIndex !== -1) {
             Game.stations[stationIndex].markers.forEach(m => map.removeLayer(m));
             Game.stations.splice(stationIndex, 1);
-            Game.stationDemandMap.delete(data.stationId); // ★追加: マップからも削除
+            Game.stationDemandMap.delete(data.stationId); 
           }
           Game.updateGlobalStats({ globalStats: { stationsCount: Game.stations.length } });
         });
@@ -867,7 +864,6 @@
       }
 
       function updateTrainPositions(trainPositions) {
-        // ... (省略: 列車位置更新ロジックは変更なし)
         const longitudeOffsets = [-360, 0, 360];
         const existingTrainIds = new Set(Object.keys(Game.allTrainMarkers));
 
@@ -946,7 +942,6 @@
       }
 
       function updateRankingUI(ranking) {
-        // ... (省略: ランキングUI更新ロジックは変更なし)
         const list = document.getElementById("ranking-list");
         list.innerHTML = "";
         ranking.forEach((item, index) => {
@@ -972,7 +967,6 @@
       }
 
       function handleStationDismantle(station) {
-        // ... (省略: 駅解体ロジックは変更なし)
         if (Game.mode !== "dismantle-station" || !socket) return;
 
         if (station.ownerId !== Game.userId) {
@@ -1028,7 +1022,6 @@
             }
           }
           
-          // ★修正: サーバーに概算コスト計算を要求
           socket.emit("calculateLineCost", {
               stationCoords: currentCoords,
               trackType: Game.currentTrackType
@@ -1040,14 +1033,12 @@
         }
       }
       
-      // ★修正: サーバーから受け取ったコストを表示
       function updateLineCostDisplay() {
           const display = document.getElementById("line-cost-display");
           
           if (lineCandidateNodes.length < 2) {
               display.textContent = "¥0";
           } else {
-              // サーバーから受け取った概算コストを表示
               display.textContent = `¥${Game._lineConstructionCost.toLocaleString()}`;
               display.title = `概算コスト: ¥${Game._lineConstructionCost.toLocaleString()}`;
           }
@@ -1077,12 +1068,11 @@
         lineCandidateNodes = [];
         drawingPolyline = null;
         toggleConstructionMode("idle");
-        Game._lineConstructionCost = 0; // リセット
+        Game._lineConstructionCost = 0; 
         updateLineCostDisplay(); 
       }
 
       window.upgradeStation = (stationId, newType) => {
-        // ... (省略: 駅アップグレードロジックは変更なし)
         if (!socket) return alert("サーバーに接続されていません。");
         
         const station = Game.stations.find(s => s.id === stationId);
@@ -1107,7 +1097,6 @@
       };
       
       window.renameStationClient = (stationId) => {
-        // ... (省略: 駅リネームロジックは変更なし)
         if (!socket) return alert("サーバーに接続されていません。");
         
         const input = document.getElementById(`rename-input-${stationId}`);
@@ -1122,7 +1111,6 @@
 
 
       function handleLineDismantle(e) {
-        // ... (省略: 路線解体ロジックは変更なし)
         if (Game.mode !== "dismantle-line" || !socket) return;
 
         let closestLineId = null;
@@ -1173,7 +1161,6 @@
       // =========================================================
 
       function toggleConstructionMode(newMode) {
-        // ... (省略: 建設モード切り替えロジックは変更なし)
         const mapContainer = map.getContainer();
 
         L.DomUtil.removeClass(mapContainer, "station-mode");
@@ -1189,7 +1176,7 @@
         lineCandidateNodes = [];
 
         Game.mode = newMode;
-        Game._lineConstructionCost = 0; // リセット
+        Game._lineConstructionCost = 0; 
         updateLineCostDisplay(); 
 
         document
@@ -1224,7 +1211,6 @@
         }
       }
 
-      // ★修正: 車両管理UIの更新 (購入/売却/撤去)
       function updateVehicleManagementUI() {
         // --- 購入セクション ---
         const buyContainer = document.getElementById("vehicle-buy-container");
@@ -1290,9 +1276,8 @@
         }
         
         Game.vehicles.forEach(vehicle => {
-            // ★修正: dataKeyを使用してVehicleDataから情報を取得
             const data = VehicleData[vehicle.dataKey];
-            if (!data) return; // データがない場合はスキップ
+            if (!data) return; 
             
             const salePrice = Math.round(VEHICLE_BASE_COST * data.purchaseMultiplier * 0.5);
             const lineDisplay = vehicle.lineId ? `Line ${vehicle.lineId}` : '待機中';
