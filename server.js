@@ -107,7 +107,7 @@ const VehicleData = {
 // =================================================================
 // ★ GeoTIFF人口データ処理ロジック (修正)
 // =================================================================
-const WORLDPOP_URL = 'https://70.gigafile.nu/download.php?file=1007-jdc579b75259661a899f2c4fd5accd88e';
+const WORLDPOP_URL = 'https://drive.usercontent.google.com/download?id=1RXhkeCoPf5gDpz7kO40wn4x4646sXNqq&export=download&authuser=0&confirm=t&uuid=ad389895-3ad2-4345-a5b8-fdfc6a2bcdd6&at=AKSUxGN0g5r6LpggqZbcglzOt8PN:1759388822962';
 
 let tiffImage = null;
 let geoKeyDirectory = null;
