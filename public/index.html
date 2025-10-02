@@ -24,7 +24,7 @@
       #game-stats,
       #login-overlay,
       #ranking-panel,
-      #news-log-panel {
+      #news-log-panel { /* ★修正: ニュース/ログパネルを追加 */
         background-color: rgba(255, 255, 255, 0.95);
         padding: 10px;
         border: 2px solid #333;
@@ -59,8 +59,8 @@
         top: 10px;
         left: 10px;
         width: 300px;
-        max-height: 95vh;
-        overflow-y: auto;
+        max-height: 95vh; /* 画面の高さに合わせて最大高さを設定 */
+        overflow-y: auto; /* 縦方向のスクロールを有効にする */
       }
 
       /* UIコンソール位置 */
@@ -75,7 +75,7 @@
         right: 10px;
         width: 300px;
       }
-      /* ニュース/ログパネルの位置 */
+      /* ★追加: ニュース/ログパネルの位置 */
       #news-log-panel {
         bottom: 10px;
         left: 10px;
@@ -179,7 +179,7 @@
         color: white;
       }
       
-      /* 収益ログのスタイル */
+      /* ★追加: 収益ログのスタイル */
       #revenue-log-list {
           list-style: none;
           padding: 0;
@@ -333,7 +333,7 @@
           </button>
         </div>
         
-        <!-- 車両管理を分離・強化 -->
+        <!-- ★修正: 車両管理を分離・強化 -->
         <div
             class="accordion-header"
             onclick="toggleAccordion('vehicle-management-content')"
@@ -368,7 +368,7 @@
       </div>
     </div>
     
-    <!-- ニュース/収益ログパネル (左下のUI) -->
+    <!-- ★追加: ニュース/収益ログパネル (左下のUI) -->
     <div id="news-log-panel">
         <div
             class="accordion-header"
@@ -399,7 +399,6 @@
       const INITIAL_LNG = 139.767125;
       const STATION_COST = 50000000;
       const VEHICLE_BASE_COST = 8000000;
-      
       const TRACK_MULTIPLIERS = {
           single: 1.0,
           double: 1.8,
@@ -407,8 +406,8 @@
           tram: 0.8
       };
 
-      let VehicleData = {}; 
-      let map; 
+      let VehicleData = {};
+      let map; // Leafletマップインスタンス
 
       const Game = {
         userId: null,
@@ -417,17 +416,14 @@
         establishedLines: [],
         allLines: {}, 
         stations: [],
-        vehicles: [], 
+        vehicles: [],
         allTrainMarkers: {}, 
         mode: "idle",
         currentTrackType: "single",
-        revenueLogs: [], 
+        revenueLogs: [], // ★追加: 収益ログの配列
         
         _lastLineCount: 0,
-        _lastVehicleCount: 0, // ★修正済み
-        _lineConstructionCost: 0, 
-        
-        stationDemandMap: new Map(),
+        _lastVehicleCount: 0,
 
         updateStats(data) {
           this.money = data.money !== undefined ? data.money : this.money;
@@ -452,7 +448,7 @@
             const totalAsset =
                 this.money +
                 this.totalConstructionCost * 0.7 +
-                this.vehicles.length * VEHICLE_BASE_COST * 0.5;
+                this.vehicles.length * VEHICLE_BASE_COST * 0.5; // 車両資産は購入価格の半額と仮定
                 
             document.getElementById("money-display").textContent = `¥${Math.round(
                 this.money
@@ -463,13 +459,15 @@
             document.getElementById("vehicle-count").textContent =
                 this.vehicles.length;
                 
-            this.updateRevenueLogUI();
+            this.updateRevenueLogUI(); // ★追加: 収益ログUIの更新
         },
         
+        // ★追加: 収益ログUIの更新関数
         updateRevenueLogUI() {
             const list = document.getElementById("revenue-log-list");
             list.innerHTML = "";
             
+            // 最新の20件のみ表示
             const logsToShow = this.revenueLogs.slice(-20).reverse(); 
 
             logsToShow.forEach((log) => {
@@ -495,6 +493,7 @@
                 list.appendChild(li);
             });
             
+            // スクロールを一番下（最新のログ）に移動
             const container = document.getElementById("news-log-content");
             if (container) {
                 container.scrollTop = container.scrollHeight;
@@ -528,13 +527,6 @@
         drawStations(stations) {
           this.stations.forEach((s) => s.markers.forEach(m => map.removeLayer(m)));
           this.stations = [];
-          
-          stations.forEach(s => {
-              if (s.demand) {
-                  this.stationDemandMap.set(s.id, s.demand);
-              }
-          });
-          
           stations.forEach(
             (s) =>
               new Station(
@@ -544,7 +536,8 @@
                 s.ownerId,
                 s.type, 
                 s.capacity,
-                s.name
+                s.name,
+                s.demand 
               )
           );
         },
@@ -592,13 +585,15 @@
       let lineCandidateNodes = [];
 
       class Station {
-        constructor(id, latlng, map, ownerId, type = 'Small', capacity = 3, name) {
+        // ★修正: demand引数を追加
+        constructor(id, latlng, map, ownerId, type = 'Small', capacity = 3, name, demand) {
           this.id = id;
           this.latlng = latlng;
           this.ownerId = ownerId;
           this.name = name; 
           this.type = type; 
           this.capacity = capacity; 
+          this.demand = demand; // ★追加
           this.markers = []; 
 
           const stationColor = ownerId === Game.userId ? "#0044BB" : "#FF0000";
@@ -640,23 +635,21 @@
         }
 
         generatePopupContent() {
-            const demand = Game.stationDemandMap.get(this.id) || { passenger: 'N/A', freight: 'N/A' };
-            
             let popupContent = `<b>${this.name} (ID: ${this.id})</b><br>Owner: ${this.ownerId}`;
             popupContent += `<br>種類: ${this.type} (${this.capacity}列車)`;
-            popupContent += `<br>需要: 旅客 ${Math.round(demand.passenger).toLocaleString()}, 貨物 ${Math.round(demand.freight).toLocaleString()}`;
+            popupContent += `<br>需要: 旅客 ${this.demand.passenger}, 貨物 ${this.demand.freight}`; // ★修正: 需要を追加
             
             if (this.ownerId === Game.userId) {
-                const isSmall = this.type === 'Small';
                 const isMedium = this.type === 'Medium';
                 const isLarge = this.type === 'Large';
                 
+                // ★修正: コストを動的に計算・表示
                 const costToMedium = 50000000;
                 const costToLargeFromSmall = 150000000;
                 const costToLargeFromMedium = 100000000;
 
                 popupContent += `<hr>
-                  <button onclick="upgradeStation(${this.id}, 'Medium')" ${!isSmall ? 'disabled' : ''} style="width: 100%; margin-bottom: 5px;">中規模にアップグレード (${!isSmall ? '済' : '¥' + costToMedium.toLocaleString()})</button>
+                  <button onclick="upgradeStation(${this.id}, 'Medium')" ${isMedium || isLarge ? 'disabled' : ''} style="width: 100%; margin-bottom: 5px;">中規模にアップグレード (${isMedium || isLarge ? '済' : '¥' + costToMedium.toLocaleString()})</button>
                   <button onclick="upgradeStation(${this.id}, 'Large')" ${isLarge ? 'disabled' : ''} style="width: 100%;">大規模にアップグレード (${isLarge ? '済' : (isMedium ? '¥' + costToLargeFromMedium.toLocaleString() : '¥' + costToLargeFromSmall.toLocaleString())})</button>`;
                 
                 popupContent += `<hr>
@@ -731,34 +724,27 @@
 
         socket.on("initialState", (data) => {
           VehicleData = data.vehicleData;
-          Game._lineConstructionCost = data.lineConstructionCost || 0; 
           Game.updateStats(data);
           
           if (data.allLines) {
             Game.drawLines(data.allLines);
           }
           
-          updateVehicleManagementUI();
+          updateVehicleManagementUI(); // ★修正: 関数名変更
           Game._lastLineCount = data.establishedLines ? data.establishedLines.length : 0;
           Game._lastVehicleCount = data.vehicles ? data.vehicles.length : 0;
         });
 
         socket.on("updateUserState", (data) => {
-          Game._lineConstructionCost = data.lineConstructionCost || Game._lineConstructionCost; 
           Game.updateStats(data);
           
           const currentLineCount = data.establishedLines ? data.establishedLines.length : Game._lastLineCount;
           const currentVehicleCount = data.vehicles ? data.vehicles.length : Game._lastVehicleCount;
 
           if (currentLineCount !== Game._lastLineCount || currentVehicleCount !== Game._lastVehicleCount) {
-              updateVehicleManagementUI();
+              updateVehicleManagementUI(); // ★修正: 関数名変更
               Game._lastLineCount = currentLineCount;
               Game._lastVehicleCount = currentVehicleCount;
-          }
-          
-          // 路線建設モード中にコストが更新された場合、UIを更新
-          if (Game.mode === 'track' && data.lineConstructionCost !== undefined) {
-              updateLineCostDisplay();
           }
         });
 
@@ -766,19 +752,15 @@
           Game.updateGlobalStats(data);
           updateTrainPositions(data.trainPositions);
           
+          // ★修正: 駅の需要変動を反映
           if (data.stations) {
               data.stations.forEach(sData => {
-                  Game.stationDemandMap.set(sData.id, sData.demand);
-                  
                   const station = Game.stations.find(s => s.id === sData.id);
                   if (station) {
+                      station.demand = sData.demand;
                       station.updatePopup();
                   }
               });
-          }
-          
-          if (Game.mode === 'track') {
-              updateLineCostDisplay();
           }
         });
 
@@ -787,10 +769,7 @@
         });
 
         socket.on("stationBuilt", (data) => {
-          if (data.demand) {
-              Game.stationDemandMap.set(data.id, data.demand);
-          }
-          new Station(data.id, data.latlng, map, data.ownerId, data.type, data.capacity, data.name); 
+          new Station(data.id, data.latlng, map, data.ownerId, data.type, data.capacity, data.name, data.demand); 
           Game.updateGlobalStats({ globalStats: { stationsCount: Game.stations.length } });
         });
         
@@ -829,16 +808,17 @@
           if (stationIndex !== -1) {
             Game.stations[stationIndex].markers.forEach(m => map.removeLayer(m));
             Game.stations.splice(stationIndex, 1);
-            Game.stationDemandMap.delete(data.stationId); 
           }
           Game.updateGlobalStats({ globalStats: { stationsCount: Game.stations.length } });
         });
         
+        // ★追加: 収益ログイベント
         socket.on("revenueLog", (log) => {
             Game.revenueLogs.push(log);
             Game.updateRevenueLogUI();
         });
         
+        // ★追加: ニュースイベント
         socket.on("gameNews", (news) => {
             Game.revenueLogs.push({ type: 'news', message: news.message });
             Game.updateRevenueLogUI();
@@ -864,6 +844,7 @@
       }
 
       function updateTrainPositions(trainPositions) {
+        // ... (省略: 列車位置更新ロジックは変更なし)
         const longitudeOffsets = [-360, 0, 360];
         const existingTrainIds = new Set(Object.keys(Game.allTrainMarkers));
 
@@ -882,12 +863,14 @@
 
           const markerData = Game.allTrainMarkers[train.id];
 
-          const crowdFactor = train.crowdFactor || 0; 
+          // ★修正: 混雑度を色で表現 (例: 濃い色ほど混雑)
+          const crowdFactor = train.crowdFactor || 0; // 0.0 to 1.0
           const baseColor = train.color;
           const r = parseInt(baseColor.substring(1, 3), 16);
           const g = parseInt(baseColor.substring(3, 5), 16);
           const b = parseInt(baseColor.substring(5, 7), 16);
           
+          // 混雑度に応じて色を濃くする (簡易的な例)
           const newR = Math.max(0, r - Math.round(r * crowdFactor * 0.5));
           const newG = Math.max(0, g - Math.round(g * crowdFactor * 0.5));
           const newB = Math.max(0, b - Math.round(b * crowdFactor * 0.5));
@@ -942,6 +925,7 @@
       }
 
       function updateRankingUI(ranking) {
+        // ... (省略: ランキングUI更新ロジックは変更なし)
         const list = document.getElementById("ranking-list");
         list.innerHTML = "";
         ranking.forEach((item, index) => {
@@ -967,6 +951,7 @@
       }
 
       function handleStationDismantle(station) {
+        // ... (省略: 駅解体ロジックは変更なし)
         if (Game.mode !== "dismantle-station" || !socket) return;
 
         if (station.ownerId !== Game.userId) {
@@ -1021,26 +1006,51 @@
               }).addTo(map);
             }
           }
-          
-          socket.emit("calculateLineCost", {
-              stationCoords: currentCoords,
-              trackType: Game.currentTrackType
-          });
-          
-          updateLineCostDisplay(); 
+          updateLineCostDisplay(); // ★追加: コスト表示を更新
         } else if (Game.mode === "dismantle-station") {
           handleStationDismantle(station);
         }
       }
       
+      // ★追加: 路線コスト計算 (クライアント側の簡易版)
+      function calculateLineCostClient() {
+          if (lineCandidateNodes.length < 2) return { cost: 0, lengthKm: 0 };
+          
+          let totalCost = 0;
+          let totalLengthKm = 0;
+          const trackMultiplier = TRACK_MULTIPLIERS[Game.currentTrackType] || 1.0;
+          
+          for (let i = 1; i < lineCandidateNodes.length; i++) {
+              const start = lineCandidateNodes[i-1].latlng;
+              const end = lineCandidateNodes[i].latlng;
+              
+              const startLatLng = L.latLng(start.lat, start.lng);
+              const endLatLng = L.latLng(end.lat, end.lng);
+              
+              const distanceM = startLatLng.distanceTo(endLatLng);
+              const distanceKm = distanceM / 1000;
+              
+              // 簡易的なコスト計算: 1kmあたり2,500,000円をベース
+              const baseCost = distanceKm * 2500000 * trackMultiplier; 
+              
+              // サーバー側で高低差も計算されるため、ここではベースコストのみ表示
+              totalCost += baseCost;
+              totalLengthKm += distanceKm;
+          }
+          
+          return { cost: Math.round(totalCost), lengthKm: totalLengthKm };
+      }
+      
+      // ★追加: 路線コスト表示の更新
       function updateLineCostDisplay() {
+          const { cost, lengthKm } = calculateLineCostClient();
           const display = document.getElementById("line-cost-display");
           
           if (lineCandidateNodes.length < 2) {
               display.textContent = "¥0";
           } else {
-              display.textContent = `¥${Game._lineConstructionCost.toLocaleString()}`;
-              display.title = `概算コスト: ¥${Game._lineConstructionCost.toLocaleString()}`;
+              display.textContent = `¥${cost.toLocaleString()} (${lengthKm.toFixed(2)}km)`;
+              display.title = `概算コスト: ¥${cost.toLocaleString()}\n高低差コストはサーバーで計算されます。`;
           }
       }
 
@@ -1055,7 +1065,9 @@
           s.latlng.lng,
         ]);
         
-        if (!confirm(`この路線を建設しますか？ (概算コスト: ¥${Game._lineConstructionCost.toLocaleString()})`)) {
+        const { cost } = calculateLineCostClient();
+        
+        if (!confirm(`この路線を建設しますか？ (概算コスト: ¥${cost.toLocaleString()})`)) {
             return;
         }
 
@@ -1068,11 +1080,11 @@
         lineCandidateNodes = [];
         drawingPolyline = null;
         toggleConstructionMode("idle");
-        Game._lineConstructionCost = 0; 
-        updateLineCostDisplay(); 
+        updateLineCostDisplay(); // ★追加: リセット
       }
 
       window.upgradeStation = (stationId, newType) => {
+        // ... (省略: 駅アップグレードロジックは変更なし)
         if (!socket) return alert("サーバーに接続されていません。");
         
         const station = Game.stations.find(s => s.id === stationId);
@@ -1097,6 +1109,7 @@
       };
       
       window.renameStationClient = (stationId) => {
+        // ... (省略: 駅リネームロジックは変更なし)
         if (!socket) return alert("サーバーに接続されていません。");
         
         const input = document.getElementById(`rename-input-${stationId}`);
@@ -1111,6 +1124,7 @@
 
 
       function handleLineDismantle(e) {
+        // ... (省略: 路線解体ロジックは変更なし)
         if (Game.mode !== "dismantle-line" || !socket) return;
 
         let closestLineId = null;
@@ -1161,6 +1175,7 @@
       // =========================================================
 
       function toggleConstructionMode(newMode) {
+        // ... (省略: 建設モード切り替えロジックは変更なし)
         const mapContainer = map.getContainer();
 
         L.DomUtil.removeClass(mapContainer, "station-mode");
@@ -1176,8 +1191,7 @@
         lineCandidateNodes = [];
 
         Game.mode = newMode;
-        Game._lineConstructionCost = 0; 
-        updateLineCostDisplay(); 
+        updateLineCostDisplay(); // ★追加: コスト表示をリセット
 
         document
           .querySelectorAll(".rail-ui-control button")
@@ -1211,6 +1225,7 @@
         }
       }
 
+      // ★修正: 車両管理UIの更新 (購入/売却/撤去)
       function updateVehicleManagementUI() {
         // --- 購入セクション ---
         const buyContainer = document.getElementById("vehicle-buy-container");
@@ -1277,16 +1292,13 @@
         
         Game.vehicles.forEach(vehicle => {
             const data = VehicleData[vehicle.dataKey];
-            if (!data) return; 
-            
             const salePrice = Math.round(VEHICLE_BASE_COST * data.purchaseMultiplier * 0.5);
-            const lineDisplay = vehicle.lineId ? `Line ${vehicle.lineId}` : '待機中';
             
             listContainer.innerHTML += `
                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px; border-bottom: 1px dotted #ccc; padding-bottom: 5px;">
-                    <span style="flex-grow: 1;">#${vehicle.id} (${data.name}) - ${lineDisplay}</span>
+                    <span style="flex-grow: 1;">#${vehicle.id} (${data.name}) - Line ${vehicle.lineId}</span>
                     <button onclick="sellVehicle(${vehicle.id})" style="width: 45%; background-color: #f44; color: white; margin-right: 5px;">売却 (¥${salePrice.toLocaleString()})</button>
-                    <button onclick="removeVehicleFromLine(${vehicle.id})" style="width: 45%; background-color: #ffaa00; color: white;" ${vehicle.lineId === null ? 'disabled' : ''}>撤去</button>
+                    <button onclick="removeVehicleFromLine(${vehicle.id})" style="width: 45%; background-color: #ffaa00; color: white;">撤去</button>
                 </div>
             `;
         });
@@ -1304,11 +1316,11 @@
         socket.emit("buyVehicle", { lineId: lineId, vehicleKey: vehicleKey });
       };
       
+      // ★追加: 車両売却
       window.sellVehicle = (vehicleId) => {
           if (!socket) return alert("サーバーに接続されていません。");
           const vehicle = Game.vehicles.find(v => v.id === vehicleId);
           if (!vehicle) return;
-          
           const data = VehicleData[vehicle.dataKey];
           const salePrice = Math.round(VEHICLE_BASE_COST * data.purchaseMultiplier * 0.5);
           
@@ -1317,6 +1329,7 @@
           }
       };
       
+      // ★追加: 車両の路線からの撤去
       window.removeVehicleFromLine = (vehicleId) => {
           if (!socket) return alert("サーバーに接続されていません。");
           const vehicle = Game.vehicles.find(v => v.id === vehicleId);
