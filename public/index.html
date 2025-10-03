@@ -683,7 +683,7 @@
             const station = Game.stations.find(s => s.id === data.id);
             if (station) {
                 station.name = data.newName;
-                station.updatePopup();
+                station.updatePopup(); // ポップアップとタイトルを更新
             }
         });
 
@@ -1078,7 +1078,7 @@
           const purchaseCost = VEHICLE_BASE_COST * data.purchaseMultiplier;
 
           const availableLines = Game.establishedLines.filter((line) => {
-            const isLinear = data.name === "リニア";
+            const isLinear = data.name.includes("リニア"); // リニア車両判定を修正
 
             if (isLinear) return line.trackType === "linear";
             if (line.trackType === "linear") return false;
