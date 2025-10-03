@@ -1015,21 +1015,24 @@ async function loadUserData(userId) {
 
 async function calculateRanking() {
     const allUsers = await UserModel.find({}).lean();
-    
+
     const rankingPromises = allUsers.map(async (user) => {
-        const totalConstructionCost = user.totalConstructionCost;
+        const totalConstructionCost = user.totalConstructionCost || 0;
         const vehicleCount = await VehicleModel.countDocuments({ ownerId: user.userId });
-        
-        const score = user.money + totalConstructionCost * 0.7 + vehicleCount * 10000000 - user.loans.reduce((sum, l) => sum + l.remaining, 0);
-        
+        const loans = Array.isArray(user.loans) ? user.loans : [];
+        const totalLoanRemaining = loans.reduce((sum, loan) => sum + (loan?.remaining ?? 0), 0);
+
+        const baseMoney = typeof user.money === 'number' ? user.money : 0;
+        const score = baseMoney + totalConstructionCost * 0.7 + vehicleCount * 10_000_000 - totalLoanRemaining;
+
         return {
             userId: user.userId,
-            score: score,
+            score,
         };
     });
-    
+
     const ranking = await Promise.all(rankingPromises);
-    
+
     return ranking
         .sort((a, b) => b.score - a.score)
         .slice(0, 10);
