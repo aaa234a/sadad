@@ -2,7 +2,7 @@
 <html lang="ja">
   <head>
     <meta charset="UTF-8" />
-    <title>NIMBY Rail Clone - オンライン鉄道シミュレーション</title>
+    <title>NIMBY Rail Clone - 鉄道＆航空シミュレーション</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <link
       rel="stylesheet"
@@ -149,7 +149,37 @@
         box-shadow: 0 0 5px rgba(0, 0, 0, 0.8);
         cursor: pointer;
       }
-      .leaflet-container.station-mode {
+      
+      /* ★追加: 空港アイコン */
+      .airport-icon {
+        background-color: #007bff;
+        width: 20px;
+        height: 20px;
+        border-radius: 50%;
+        border: 3px solid #fff;
+        box-shadow: 0 0 5px rgba(0, 0, 0, 0.8);
+        cursor: pointer;
+        text-align: center;
+        line-height: 14px;
+        font-size: 12px;
+        color: white;
+        font-weight: bold;
+      }
+      
+      /* ★追加: 飛行機アイコン */
+      .airplane-icon {
+        width: 16px;
+        height: 16px;
+        background-color: #007bff;
+        border-radius: 50%;
+        border: 2px solid #fff;
+        box-shadow: 0 0 5px rgba(0, 0, 0, 0.8);
+        transform: translate(-50%, -50%);
+        clip-path: polygon(50% 0%, 60% 30%, 100% 50%, 60% 70%, 50% 100%, 40% 70%, 0% 50%, 40% 30%); 
+      }
+      
+      .leaflet-container.station-mode,
+      .leaflet-container.airport-mode {
         cursor: crosshair;
       }
       .leaflet-container.dismantle-station-mode .station-icon {
@@ -187,7 +217,7 @@
     <!-- ログインオーバーレイ -->
     <div id="login-overlay">
       <div id="login-panel">
-        <h2>オンライン鉄道シムへようこそ</h2>
+        <h2>オンライン鉄道＆航空シムへようこそ</h2>
         <p>
           ランキングに参加するため、ユーザー名とパスワードを入力してください。<br /><small
             >（新規ユーザーは任意のパスワードで登録できます）</small
@@ -227,8 +257,8 @@
         <p>総資産: <span id="asset-display">¥0</span></p>
         <p>月次維持費: <span id="maint-cost-display">¥0</span></p>
         <p>
-          車両数: <span id="vehicle-count">0</span> | 駅数:
-          <span id="station-count">0</span>
+          車両数: <span id="vehicle-count">0</span> | ターミナル数:
+          <span id="terminal-count">0</span>
         </p>
       </div>
     </div>
@@ -243,6 +273,10 @@
       </div>
       <div id="control-content" class="accordion-content open">
         <div style="text-align: center; margin-bottom: 10px">
+          
+          <!-- 鉄道インフラ -->
+          <hr style="margin: 10px 0; border: none; border-top: 2px solid #333;" />
+          <h3>🚆 鉄道インフラ</h3>
           <button
             id="btn-station-mode"
             onclick="toggleConstructionMode('station')"
@@ -256,24 +290,37 @@
             ✅ 路線を確定
           </button>
 
+          <!-- 航空インフラ ★追加 -->
+          <hr style="margin: 10px 0; border: none; border-top: 2px solid #007bff;" />
+          <h3>✈️ 航空インフラ</h3>
+          <button id="btn-airport-mode" onclick="toggleConstructionMode('airport')">
+              ✈️ 空港モード (¥500M)
+          </button>
+          <button id="btn-air-route-mode" onclick="toggleConstructionMode('air-route')">
+              🛬 航空路線モード
+          </button>
+          <button onclick="finalizeAirRoute()" style="margin-top: 5px">
+              ✅ 航空路線を確定
+          </button>
+
           <hr
             style="margin: 10px 0; border: none; border-top: 1px solid #ccc"
           />
 
-          <!-- 解体モードのボタン -->
+          <!-- 解体モード -->
           <button
             id="btn-dismantle-station-mode"
             onclick="toggleConstructionMode('dismantle-station')"
             style="background-color: #ffc0cb"
           >
-            💥 駅解体モード
+            💥 ターミナル解体モード
           </button>
           <button
             id="btn-dismantle-line-mode"
             onclick="toggleConstructionMode('dismantle-line')"
             style="background-color: #ffc0cb"
           >
-            💣 路線解体モード
+            💣 路線/航空路線解体モード
           </button>
 
           <hr
@@ -289,13 +336,14 @@
           />
 
           <label style="display: block; margin-bottom: 5px; font-weight: bold"
-            >線路タイプ:</label
+            >線路/路線タイプ:</label
           >
           <select id="track-type" onchange="Game.currentTrackType = this.value">
             <option value="single">単線 (x1.0)</option>
             <option value="double">複線 (x1.8)</option>
             <option value="linear">リニア専用 (x5.0)</option>
             <option value="tram">路面電車専用 (x0.8)</option>
+            <option value="air">航空路線 (建設費安)</option>
           </select>
         </div>
         <div id="vehicle-buy-container"></div>
@@ -349,7 +397,9 @@
       const INITIAL_LAT = 35.681236;
       const INITIAL_LNG = 139.767125;
       const STATION_COST = 50000000;
+      const AIRPORT_COST = 500000000; // 500M
       const VEHICLE_BASE_COST = 8000000;
+      const AIRPLANE_BASE_COST = 50000000; // 50M
 
       let VehicleData = {};
       let map; // Leafletマップインスタンス
@@ -361,8 +411,9 @@
         establishedLines: [],
         allLines: {}, 
         stations: [],
+        airports: [], // ★追加
         vehicles: [],
-        allTrainMarkers: {}, 
+        allVehicleMarkers: {}, // 列車と飛行機を統合
         mode: "idle",
         currentTrackType: "single",
         
@@ -382,17 +433,18 @@
           this.vehicles =
             data.vehicles !== undefined ? data.vehicles : this.vehicles;
 
-          if (data.stations) this.drawStations(data.stations);
+          if (data.stations || data.airports) this.drawTerminals(data.stations, data.airports);
           if (data.allLines) this.drawLines(data.allLines);
 
           this.updateFinancialUI();
         },
         
         updateFinancialUI() {
+            // 資産計算を簡略化
             const totalAsset =
                 this.money +
                 this.totalConstructionCost * 0.7 +
-                this.vehicles.length * VEHICLE_BASE_COST;
+                this.vehicles.length * VEHICLE_BASE_COST; // 飛行機のコストも概算で含む
                 
             document.getElementById("money-display").textContent = `¥${Math.round(
                 this.money
@@ -414,8 +466,8 @@
           document.getElementById("maint-cost-display").textContent = `¥${(
             data.globalStats.lastMonthlyMaintenance || 0
           ).toLocaleString()}`;
-          document.getElementById("station-count").textContent =
-            data.globalStats.stationsCount;
+          document.getElementById("terminal-count").textContent =
+            data.globalStats.stationsCount + data.globalStats.airportsCount;
             
           this.updateFinancialUI();
         },
@@ -428,9 +480,15 @@
           return `${year}年${month}月${day}日 ${hour}時`;
         },
 
-        drawStations(stations) {
+        drawTerminals(stations, airports) {
+          // 既存の駅マーカーを削除
           this.stations.forEach((s) => s.markers.forEach(m => map.removeLayer(m)));
           this.stations = [];
+          
+          // 既存の空港マーカーを削除
+          this.airports.forEach((a) => a.markers.forEach(m => map.removeLayer(m)));
+          this.airports = [];
+
           stations.forEach(
             (s) =>
               new Station(
@@ -440,8 +498,21 @@
                 s.ownerId,
                 s.type, 
                 s.capacity,
-                s.name, // 駅名
-                s.demand // ★変更: 需要を追加
+                s.name, 
+                s.demand 
+              )
+          );
+          
+          airports.forEach(
+            (a) =>
+              new Airport(
+                a.id,
+                { lat: a.latlng[0], lng: a.latlng[1] },
+                map,
+                a.ownerId,
+                a.type, 
+                a.capacity,
+                a.name 
               )
           );
         },
@@ -456,16 +527,25 @@
 
         drawLine(line) {
           let weight = 8;
+          let dashArray = null;
+          let color = line.color;
+
           if (line.trackType === "double") weight = 12;
           else if (line.trackType === "linear") weight = 15;
           else if (line.trackType === "tram") weight = 6;
+          else if (line.trackType === "air") {
+              weight = 2;
+              color = '#007bff';
+              dashArray = '5, 10'; // 航空路線は点線
+          }
 
           const isMyLine = line.ownerId === Game.userId;
           const finalStyle = {
-            color: line.color,
+            color: color,
             weight: isMyLine ? weight : weight * 0.7, 
             opacity: isMyLine ? 1 : 0.7, 
             lineCap: "round",
+            dashArray: dashArray
           };
           
           const longitudeOffsets = [-360, 0, 360];
@@ -488,17 +568,22 @@
       let drawingPolyline = null;
       let lineCandidateNodes = [];
 
+      // =========================================================
+      // B. ターミナルクラス定義
+      // =========================================================
+
+      // 鉄道駅クラス
       class Station {
-        // ★変更: nameとdemand引数を追加
         constructor(id, latlng, map, ownerId, type = 'Small', capacity = 3, name, demand) {
           this.id = id;
           this.latlng = latlng;
           this.ownerId = ownerId;
-          this.name = name; // ★変更: 駅名を設定
+          this.name = name; 
           this.type = type; 
           this.capacity = capacity; 
-          this.demand = demand; // ★変更: 需要を設定
+          this.demand = demand; 
           this.markers = []; 
+          this.isAirport = false;
 
           const stationColor = ownerId === Game.userId ? "#0044BB" : "#FF0000";
           
@@ -515,18 +600,16 @@
             const offsetLatLng = L.latLng(latlng.lat, latlng.lng + offset);
             const marker = L.marker(offsetLatLng, {
               icon: stationIcon,
-              title: this.name, // ★変更: タイトルに駅名を使用
+              title: this.name, 
             }).addTo(map);
 
             marker.bindPopup(popupContent);
             
             marker.on("click", (e) => {
-              if (Game.mode === "track" || Game.mode === "dismantle-station") {
-                handleStationClick(this);
-                L.DomEvent.stopPropagation(e);
-                if (e.originalEvent) {
-                    e.originalEvent.stopPropagation();
-                }
+              handleTerminalClick(this);
+              L.DomEvent.stopPropagation(e);
+              if (e.originalEvent) {
+                  e.originalEvent.stopPropagation();
               }
             });
             
@@ -539,10 +622,9 @@
         }
 
         generatePopupContent() {
-            let popupContent = `<b>${this.name} (ID: ${this.id})</b><br>Owner: ${this.ownerId}`;
+            let popupContent = `<b>🚆 駅: ${this.name} (ID: ${this.id})</b><br>Owner: ${this.ownerId}`;
             popupContent += `<br>種類: ${this.type} (${this.capacity}列車)`;
             
-            // ★追加: 需要情報
             if (this.demand) {
                 popupContent += `<hr><b>📊 需要</b><br>`;
                 popupContent += `旅客: ${this.demand.passenger.toLocaleString()}人/月<br>`;
@@ -557,11 +639,10 @@
                   <button onclick="upgradeStation(${this.id}, 'Medium')" ${isMedium || isLarge ? 'disabled' : ''} style="width: 100%; margin-bottom: 5px;">中規模にアップグレード (¥50M)</button>
                   <button onclick="upgradeStation(${this.id}, 'Large')" ${isLarge ? 'disabled' : ''} style="width: 100%;">大規模にアップグレード (${isMedium ? '¥100M' : '¥150M'})</button>`;
                 
-                // ★追加: リネームUI
                 popupContent += `<hr>
                   <label for="rename-input-${this.id}">駅名変更:</label>
                   <input type="text" id="rename-input-${this.id}" value="${this.name}" maxlength="20" style="width: 100%; margin: 5px 0;">
-                  <button onclick="renameStationClient(${this.id})" style="width: 100%;">駅名を変更</button>`;
+                  <button onclick="renameTerminalClient(${this.id}, false)" style="width: 100%;">駅名を変更</button>`;
             }
             return popupContent;
         }
@@ -570,7 +651,83 @@
             const newContent = this.generatePopupContent();
             this.markers.forEach(marker => {
                 marker.bindPopup(newContent);
-                marker.setTitle(this.name); // ★変更: タイトルも更新
+                marker.setTitle(this.name); 
+            });
+        }
+      }
+      
+      // 空港クラス ★追加
+      class Airport {
+        constructor(id, latlng, map, ownerId, type = 'Small', capacity = 5, name) {
+          this.id = id;
+          this.latlng = latlng;
+          this.ownerId = ownerId;
+          this.name = name; 
+          this.type = type; 
+          this.capacity = capacity; 
+          this.markers = []; 
+          this.isAirport = true;
+
+          const airportColor = ownerId === Game.userId ? "#007bff" : "#FF0000";
+          
+          const popupContent = this.generatePopupContent();
+          
+          const airportIcon = L.divIcon({
+            className: "airport-icon",
+            html: '✈️',
+            style: `background-color: ${airportColor};`,
+          });
+          
+          const longitudeOffsets = [-360, 0, 360];
+
+          longitudeOffsets.forEach((offset) => {
+            const offsetLatLng = L.latLng(latlng.lat, latlng.lng + offset);
+            const marker = L.marker(offsetLatLng, {
+              icon: airportIcon,
+              title: this.name, 
+            }).addTo(map);
+
+            marker.bindPopup(popupContent);
+            
+            marker.on("click", (e) => {
+              handleTerminalClick(this);
+              L.DomEvent.stopPropagation(e);
+              if (e.originalEvent) {
+                  e.originalEvent.stopPropagation();
+              }
+            });
+            
+            this.markers.push(marker);
+          });
+
+          this.marker = this.markers[1]; 
+          
+          Game.airports.push(this);
+        }
+
+        generatePopupContent() {
+            let popupContent = `<b>✈️ 空港: ${this.name} (ID: ${this.id})</b><br>Owner: ${this.ownerId}`;
+            popupContent += `<br>種類: ${this.type} (${this.capacity}機)`;
+            
+            // 空港の需要表示はサーバー側で実装が必要だが、ここでは省略
+            
+            if (this.ownerId === Game.userId) {
+                // 空港のアップグレードロジックはサーバー側で別途実装が必要
+                popupContent += `<hr>空港のアップグレード機能は未実装です。`;
+                
+                popupContent += `<hr>
+                  <label for="rename-input-${this.id}">空港名変更:</label>
+                  <input type="text" id="rename-input-${this.id}" value="${this.name}" maxlength="20" style="width: 100%; margin: 5px 0;">
+                  <button onclick="renameTerminalClient(${this.id}, true)" style="width: 100%;">空港名を変更</button>`;
+            }
+            return popupContent;
+        }
+
+        updatePopup() {
+            const newContent = this.generatePopupContent();
+            this.markers.forEach(marker => {
+                marker.bindPopup(newContent);
+                marker.setTitle(this.name); 
             });
         }
       }
@@ -580,6 +737,7 @@
       // =========================================================
 
       function getCookie(name) {
+        // ... (既存の関数)
         const nameEQ = name + "=";
         const ca = document.cookie.split(";");
         for (let i = 0; i < ca.length; i++) {
@@ -592,6 +750,7 @@
       }
 
       async function handleLogin() {
+        // ... (既存の関数)
         const username = document.getElementById("username-input").value.trim();
         const password = document.getElementById("password-input").value.trim();
 
@@ -656,17 +815,22 @@
 
         socket.on("gameUpdate", (data) => {
           Game.updateGlobalStats(data);
-          updateTrainPositions(data.trainPositions);
+          updateVehiclePositions(data.vehiclePositions);
         });
 
         socket.on("rankingUpdate", (ranking) => {
           updateRankingUI(ranking);
         });
 
+        // 駅/空港の建設イベント
         socket.on("stationBuilt", (data) => {
-          // ★変更: 駅名(data.name)と需要(data.demand)を渡す
-          new Station(data.id, data.latlng, map, data.ownerId, data.type, data.capacity, data.name, data.demand); 
-          Game.updateGlobalStats({ globalStats: { stationsCount: Game.stations.length } });
+          new Station(data.id, { lat: data.latlng.lat, lng: data.latlng.lng }, map, data.ownerId, data.type, data.capacity, data.name, data.demand); 
+          Game.updateGlobalStats({ globalStats: { stationsCount: Game.stations.length, airportsCount: Game.airports.length } });
+        });
+        
+        socket.on("airportBuilt", (data) => {
+          new Airport(data.id, { lat: data.latlng.lat, lng: data.latlng.lng }, map, data.ownerId, data.type, data.capacity, data.name); 
+          Game.updateGlobalStats({ globalStats: { stationsCount: Game.stations.length, airportsCount: Game.airports.length } });
         });
         
         socket.on("stationUpgraded", (data) => {
@@ -678,12 +842,18 @@
           }
         });
         
-        // ★追加: 駅名変更イベントハンドラ
-        socket.on("stationRenamed", (data) => {
-            const station = Game.stations.find(s => s.id === data.id);
-            if (station) {
-                station.name = data.newName;
-                station.updatePopup(); // ポップアップとタイトルを更新
+        // 駅/空港名変更イベントハンドラ
+        socket.on("terminalRenamed", (data) => {
+            let terminal;
+            if (data.isAirport) {
+                terminal = Game.airports.find(s => s.id === data.id);
+            } else {
+                terminal = Game.stations.find(s => s.id === data.id);
+            }
+            
+            if (terminal) {
+                terminal.name = data.newName;
+                terminal.updatePopup(); 
             }
         });
 
@@ -699,14 +869,16 @@
         });
 
         socket.on("stationDismantled", (data) => {
-          const stationIndex = Game.stations.findIndex(
-            (s) => s.id === data.stationId
+          let terminalArray = data.isAirport ? Game.airports : Game.stations;
+          
+          const terminalIndex = terminalArray.findIndex(
+            (s) => s.id === data.terminalId
           );
-          if (stationIndex !== -1) {
-            Game.stations[stationIndex].markers.forEach(m => map.removeLayer(m));
-            Game.stations.splice(stationIndex, 1);
+          if (terminalIndex !== -1) {
+            terminalArray[terminalIndex].markers.forEach(m => map.removeLayer(m));
+            terminalArray.splice(terminalIndex, 1);
           }
-          Game.updateGlobalStats({ globalStats: { stationsCount: Game.stations.length } });
+          Game.updateGlobalStats({ globalStats: { stationsCount: Game.stations.length, airportsCount: Game.airports.length } });
         });
 
         socket.on("error", (message) => {
@@ -727,47 +899,48 @@
           }, 5000);
         });
         
-        // ★追加: チャット履歴の受信
         socket.on("chatHistory", (history) => {
             const chatMessages = document.getElementById('chat-messages');
-            chatMessages.innerHTML = ''; // 履歴をクリア
+            chatMessages.innerHTML = ''; 
             history.forEach(msg => {
                 appendChatMessage(msg.userId, msg.message, msg.timestamp);
             });
         });
 
-        // ★追加: 新しいチャットメッセージの受信
         socket.on("newMessage", (data) => {
             appendChatMessage(data.userId, data.message, data.timestamp);
         });
       }
 
-      function updateTrainPositions(trainPositions) {
+      function updateVehiclePositions(vehiclePositions) {
         const longitudeOffsets = [-360, 0, 360];
-        const existingTrainIds = new Set(Object.keys(Game.allTrainMarkers));
+        const existingVehicleIds = new Set(Object.keys(Game.allVehicleMarkers));
 
-        trainPositions.forEach((train) => {
-          if (!Array.isArray(train.latlng) || train.latlng.length !== 2) {
-              console.warn(`列車ID ${train.id} の位置情報が不正です:`, train.latlng);
+        vehiclePositions.forEach((vehicle) => {
+          if (!Array.isArray(vehicle.latlng) || vehicle.latlng.length !== 2) {
+              console.warn(`車両ID ${vehicle.id} の位置情報が不正です:`, vehicle.latlng);
               return; 
           }
 
-          const latlng = L.latLng(train.latlng[0], train.latlng[1]);
-          existingTrainIds.delete(train.id.toString());
+          const latlng = L.latLng(vehicle.latlng[0], vehicle.latlng[1]);
+          existingVehicleIds.delete(vehicle.id.toString());
 
-          if (!Game.allTrainMarkers[train.id]) {
-            Game.allTrainMarkers[train.id] = { original: null, copies: [] };
+          if (!Game.allVehicleMarkers[vehicle.id]) {
+            Game.allVehicleMarkers[vehicle.id] = { original: null, copies: [] };
           }
 
-          const markerData = Game.allTrainMarkers[train.id];
+          const markerData = Game.allVehicleMarkers[vehicle.id];
+          
+          const isAir = vehicle.category === 'air';
+          const iconClass = isAir ? "airplane-icon" : "train-icon";
 
           const markerIcon = L.divIcon({
-            className: "train-icon",
-            style: `background-color: ${train.color}; border-color: ${
-              train.owner === Game.userId ? "yellow" : "white"
+            className: iconClass,
+            style: `background-color: ${vehicle.color}; border-color: ${
+              vehicle.owner === Game.userId ? "yellow" : "white"
             };`,
           });
-          const popupContent = `列車 #${train.id} (Owner: ${train.owner}) - Status: ${train.status || 'Running'}`;
+          const popupContent = `${isAir ? '✈️' : '🚆'} 車両 #${vehicle.id} (Owner: ${vehicle.owner}) - Status: ${vehicle.status || 'Running'}`;
 
           longitudeOffsets.forEach((offset, index) => {
             const offsetLatLng = L.latLng(latlng.lat, latlng.lng + offset);
@@ -798,13 +971,13 @@
           });
         });
 
-        existingTrainIds.forEach(trainId => {
-            const markerData = Game.allTrainMarkers[trainId];
+        existingVehicleIds.forEach(vehicleId => {
+            const markerData = Game.allVehicleMarkers[vehicleId];
             if (markerData.original) map.removeLayer(markerData.original);
             markerData.copies.forEach(copy => {
                 if (copy) map.removeLayer(copy); 
             });
-            delete Game.allTrainMarkers[trainId];
+            delete Game.allVehicleMarkers[vehicleId];
         });
       }
 
@@ -832,29 +1005,50 @@
         if (Game.mode !== "station" || !socket) return;
         socket.emit("buildStation", { latlng: e.latlng });
       }
+      
+      function handleAirportCreation(e) {
+        if (Game.mode !== "airport" || !socket) return;
+        socket.emit("buildAirport", { latlng: e.latlng });
+      }
 
-      function handleStationDismantle(station) {
+      function handleTerminalDismantle(terminal) {
         if (Game.mode !== "dismantle-station" || !socket) return;
 
-        if (station.ownerId !== Game.userId) {
-          alert("自分の駅しか解体できません。");
+        if (terminal.ownerId !== Game.userId) {
+          alert("自分のターミナルしか解体できません。");
           return;
         }
+        
+        const cost = terminal.isAirport ? AIRPORT_COST : STATION_COST;
+        const dismantleCost = Math.round(cost * 0.1);
+        
+        const type = terminal.isAirport ? '空港' : '駅';
 
-        const dismantleCost = Math.round(STATION_COST * 0.1);
         if (
           confirm(
-            `駅 ${
-              station.name
-            } (ID: ${station.id}) を解体しますか？ (費用: ¥${dismantleCost.toLocaleString()})`
+            `${type} ${terminal.name} (ID: ${terminal.id}) を解体しますか？ (費用: ¥${dismantleCost.toLocaleString()})`
           )
         ) {
-          socket.emit("dismantleStation", { stationId: station.id });
+          socket.emit("dismantleTerminal", { terminalId: terminal.id, isAirport: terminal.isAirport });
         }
       }
 
-      function handleStationClick(station) {
+      // 駅/空港のクリックハンドラを統合
+      function handleTerminalClick(terminal) {
         if (Game.mode === "track") {
+            if (terminal.isAirport) {
+                alert("鉄道路線は空港をノードにできません。");
+                return;
+            }
+            handleTrackNodeClick(terminal);
+        } else if (Game.mode === "air-route") {
+            handleAirRouteNodeClick(terminal);
+        } else if (Game.mode === "dismantle-station") {
+            handleTerminalDismantle(terminal);
+        }
+      }
+      
+      function handleTrackNodeClick(station) {
           if (station.ownerId !== Game.userId) {
             alert("他プレイヤーの駅は路線のノードとして使用できません。");
             return;
@@ -863,40 +1057,66 @@
           if (lineCandidateNodes.includes(station)) return;
 
           lineCandidateNodes.push(station);
+          updateDrawingPolyline(Game.currentTrackType);
+      }
+      
+      function handleAirRouteNodeClick(terminal) {
+          if (terminal.ownerId !== Game.userId) {
+            alert("他プレイヤーの施設はノードとして使用できません。");
+            return;
+          }
 
-          const currentCoords = lineCandidateNodes.map((s) => [
-            s.latlng.lat,
-            s.latlng.lng,
+          if (lineCandidateNodes.includes(terminal)) return;
+
+          lineCandidateNodes.push(terminal);
+          updateDrawingPolyline('air');
+      }
+      
+      function updateDrawingPolyline(trackType) {
+          const currentCoords = lineCandidateNodes.map((t) => [
+            t.latlng.lat,
+            t.latlng.lng,
           ]);
 
           if (currentCoords.length >= 2) {
             let weight = 7;
-            if (Game.currentTrackType === "double") weight = 12;
-            else if (Game.currentTrackType === "linear") weight = 15;
-            else if (Game.currentTrackType === "tram") weight = 6;
+            let dashArray = "10, 10";
+            let color = "#C0C0C0";
+            
+            if (trackType === "double") weight = 12;
+            else if (trackType === "linear") weight = 15;
+            else if (trackType === "tram") weight = 6;
+            else if (trackType === "air") {
+                weight = 2;
+                color = "#007bff";
+                dashArray = "5, 10";
+            }
 
             if (drawingPolyline) {
               drawingPolyline
                 .setLatLngs(currentCoords)
-                .setStyle({ color: "#C0C0C0", weight: weight });
+                .setStyle({ color: color, weight: weight, dashArray: dashArray });
             } else {
               drawingPolyline = L.polyline(currentCoords, {
-                color: "#C0C0C0",
+                color: color,
                 weight: weight,
                 opacity: 0.8,
-                dashArray: "10, 10",
+                dashArray: dashArray,
               }).addTo(map);
             }
           }
-        } else if (Game.mode === "dismantle-station") {
-          handleStationDismantle(station);
-        }
       }
 
       function finalizeLine() {
         if (lineCandidateNodes.length < 2 || !socket) {
           alert("路線には2つ以上の駅が必要です。");
           return;
+        }
+        
+        // 航空路線と駅が混在していないかチェック
+        if (lineCandidateNodes.some(t => t.isAirport)) {
+            alert("鉄道路線には空港を含めることはできません。航空路線確定ボタンを使用してください。");
+            return;
         }
 
         const stationCoords = lineCandidateNodes.map((s) => [
@@ -905,14 +1125,40 @@
         ]);
 
         socket.emit("buildLine", {
-          stationCoords: stationCoords,
+          terminalCoords: stationCoords,
           trackType: Game.currentTrackType,
         });
 
+        resetLineDrawing();
+        toggleConstructionMode("idle");
+      }
+      
+      function finalizeAirRoute() {
+        if (lineCandidateNodes.length < 2 || !socket) {
+          alert("航空路線には2つ以上のターミナルが必要です。");
+          return;
+        }
+        
+        // 航空路線は駅と空港を混在させても良いとする
+        
+        const terminalCoords = lineCandidateNodes.map((t) => [
+          t.latlng.lat,
+          t.latlng.lng,
+        ]);
+
+        socket.emit("buildLine", {
+          terminalCoords: terminalCoords,
+          trackType: 'air',
+        });
+
+        resetLineDrawing();
+        toggleConstructionMode("idle");
+      }
+      
+      function resetLineDrawing() {
         if (drawingPolyline) map.removeLayer(drawingPolyline);
         lineCandidateNodes = [];
         drawingPolyline = null;
-        toggleConstructionMode("idle");
       }
 
       window.upgradeStation = (stationId, newType) => {
@@ -939,18 +1185,17 @@
         }
       };
       
-      // ★追加: 駅名リネームクライアント関数
-      window.renameStationClient = (stationId) => {
+      window.renameTerminalClient = (terminalId, isAirport) => {
         if (!socket) return alert("サーバーに接続されていません。");
         
-        const input = document.getElementById(`rename-input-${stationId}`);
+        const input = document.getElementById(`rename-input-${terminalId}`);
         const newName = input ? input.value.trim() : null;
         
         if (!newName || newName.length < 2 || newName.length > 20) {
-            return alert("駅名は2文字以上20文字以内で入力してください。");
+            return alert("名称は2文字以上20文字以内で入力してください。");
         }
 
-        socket.emit("renameStation", { stationId: stationId, newName: newName });
+        socket.emit("renameTerminal", { terminalId: terminalId, newName: newName, isAirport: isAirport });
       };
 
 
@@ -985,7 +1230,7 @@
         const lineData = Game.establishedLines.find((l) => l.id == closestLineId);
 
         if (!lineData || lineData.ownerId !== Game.userId) {
-          alert("自分の路線のみ解体可能です。");
+          alert("自分の路線/航空路線のみ解体可能です。");
           return;
         }
 
@@ -1008,16 +1253,17 @@
         const mapContainer = map.getContainer();
 
         L.DomUtil.removeClass(mapContainer, "station-mode");
+        L.DomUtil.removeClass(mapContainer, "airport-mode");
         L.DomUtil.removeClass(mapContainer, "track-mode");
+        L.DomUtil.removeClass(mapContainer, "air-route-mode");
         L.DomUtil.removeClass(mapContainer, "dismantle-station-mode");
         L.DomUtil.removeClass(mapContainer, "dismantle-line-mode");
 
         map.off("click", handleStationCreation);
+        map.off("click", handleAirportCreation);
         map.off("click", handleLineDismantle);
 
-        if (drawingPolyline) map.removeLayer(drawingPolyline);
-        drawingPolyline = null;
-        lineCandidateNodes = [];
+        resetLineDrawing();
 
         Game.mode = newMode;
 
@@ -1029,9 +1275,20 @@
           L.DomUtil.addClass(mapContainer, "station-mode");
           document.getElementById("btn-station-mode").classList.add("active");
           map.on("click", handleStationCreation);
+          Game.currentTrackType = "single";
+        } else if (newMode === "airport") {
+          L.DomUtil.addClass(mapContainer, "airport-mode");
+          document.getElementById("btn-airport-mode").classList.add("active");
+          map.on("click", handleAirportCreation);
+          Game.currentTrackType = "air";
         } else if (newMode === "track") {
           L.DomUtil.addClass(mapContainer, "track-mode");
           document.getElementById("btn-track-mode").classList.add("active");
+          Game.currentTrackType = "single";
+        } else if (newMode === "air-route") {
+          L.DomUtil.addClass(mapContainer, "air-route-mode");
+          document.getElementById("btn-air-route-mode").classList.add("active");
+          Game.currentTrackType = "air";
         } else if (newMode === "dismantle-station") {
           L.DomUtil.addClass(mapContainer, "dismantle-station-mode");
           document
@@ -1045,6 +1302,7 @@
           map.on("click", handleLineDismantle);
         } else {
           document.getElementById("btn-station-mode").classList.add("active"); 
+          Game.currentTrackType = "single";
         }
         
         const trackTypeSelect = document.getElementById("track-type");
@@ -1055,10 +1313,10 @@
 
       function updateVehicleBuyUI() {
         const container = document.getElementById("vehicle-buy-container");
-        container.innerHTML = `<h4>🚆 車両購入・路線割当</h4>`;
+        container.innerHTML = `<h4>🚆✈️ 車両/飛行機購入・路線割当</h4>`;
 
         if (Game.establishedLines.length === 0) {
-          container.innerHTML += `<p>路線を建設すると車両が購入できます。</p>`;
+          container.innerHTML += `<p>路線/航空路線を建設すると車両/飛行機が購入できます。</p>`;
           return;
         }
 
@@ -1075,11 +1333,21 @@
 
         sortedVehicleKeys.forEach((key) => {
           const data = VehicleData[key];
-          const purchaseCost = VEHICLE_BASE_COST * data.purchaseMultiplier;
+          const isAir = data.category === 'air';
+          const baseCost = isAir ? AIRPLANE_BASE_COST : VEHICLE_BASE_COST;
+          const purchaseCost = baseCost * data.purchaseMultiplier;
+          const icon = isAir ? '✈️' : '🚆';
 
           const availableLines = Game.establishedLines.filter((line) => {
-            const isLinear = data.name.includes("リニア"); // リニア車両判定を修正
-
+            const isLinear = data.name.includes("リニア");
+            
+            if (isAir) {
+                return line.trackType === 'air';
+            }
+            
+            // 鉄道車両のチェック
+            if (line.trackType === 'air') return false; 
+            
             if (isLinear) return line.trackType === "linear";
             if (line.trackType === "linear") return false;
 
@@ -1090,7 +1358,7 @@
                     ${availableLines
                       .map(
                         (line) =>
-                          `<option value="${line.id}">Line ${line.id} (${line.trackType})</option>`
+                          `<option value="${line.id}">Line ${line.id} (${line.trackType === 'air' ? '航空' : line.trackType})</option>`
                       )
                       .join("")}
                 </select>`;
@@ -1099,7 +1367,7 @@
 
           container.innerHTML += `
                     <div style="display: flex; align-items: center; margin-bottom: 5px;">
-                        <span style="width: 100px; color: ${data.color};">${
+                        <span style="width: 100px; color: ${data.color};">${icon} ${
             data.name
           }</span>
                         <small style="flex-grow: 1; margin-left: 10px;">${
@@ -1137,7 +1405,6 @@
         }
       };
       
-      // ★追加: チャット関連関数
       function appendChatMessage(userId, message, timestamp) {
         const chatMessages = document.getElementById('chat-messages');
         const messageElement = document.createElement('p');
@@ -1150,7 +1417,7 @@
         messageElement.innerHTML = `<small style="color: #888;">[${timeString}]</small> <b>${userId}</b>: ${message}`;
         
         chatMessages.appendChild(messageElement);
-        chatMessages.scrollTop = chatMessages.scrollHeight; // スクロールを一番下へ
+        chatMessages.scrollTop = chatMessages.scrollHeight; 
       }
 
       function sendMessage() {
@@ -1169,7 +1436,9 @@
       window.handleLogin = handleLogin;
       window.toggleConstructionMode = toggleConstructionMode;
       window.finalizeLine = finalizeLine;
+      window.finalizeAirRoute = finalizeAirRoute;
       window.Game = Game;
+      window.handleTerminalClick = handleTerminalClick;
 
       document.addEventListener("DOMContentLoaded", () => {
         map = L.map("map", {
@@ -1211,7 +1480,6 @@
           document.getElementById("username-input").value = savedUserId;
         }
         
-        // ★追加: Enterキーでチャット送信
         const chatInput = document.getElementById('chat-input');
         if (chatInput) {
             chatInput.addEventListener('keypress', function(e) {
