@@ -1,3 +1,4 @@
+
 // server.js
 const express = require('express');
 const http = require('http');
@@ -20,6 +21,7 @@ const io = socketio(server);
 // 0. データベース接続とMongooseスキーマ定義
 // =================================================================
 
+// 注意: MONGO_URIは環境変数または適切な接続文字列に置き換えてください。
 const MONGO_URI = process.env.ENV_MONGO_URI || "mongodb+srv://ktyoshitu87_db_user:3137admin@cluster0.ag8sryr.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0";
 if (!MONGO_URI) {
     console.error("FATAL ERROR: MONGO_URI environment variable is not set.");
@@ -37,7 +39,7 @@ async function connectDB() {
 }
 
 // --- Mongoose Schemas ---
-// (スキーマ定義は変更なし)
+
 const GlobalStatsSchema = new mongoose.Schema({
     _id: { type: Number, default: 1 },
     gameTime: { type: Date, default: Date.now },
@@ -111,6 +113,8 @@ const ChatModel = mongoose.model('Chat', ChatSchema);
 const STATION_COST = 50000000;
 const VEHICLE_BASE_COST = 8000000;
 const LINE_COLORS = ['#E4007F', '#009933', '#0000FF', '#FFCC00', '#FF6600', '#9900CC'];
+
+// ★修正: 列車の種類を5種類追加
 const VehicleData = {
     COMMUTER: { name: "通勤形", maxSpeedKmH: 100, capacity: 500, maintenanceCostPerKm: 400, type: 'passenger', color: '#008000', purchaseMultiplier: 1.0 },
     EXPRESS: { name: "優等形", maxSpeedKmH: 160, capacity: 600, maintenanceCostPerKm: 700, type: 'passenger', color: '#FF0000', purchaseMultiplier: 1.5 },
@@ -120,6 +124,13 @@ const VehicleData = {
     HIGH_SPEED_FREIGHT: { name: "高速貨物", maxSpeedKmH: 120, capacity: 1000, maintenanceCostPerKm: 500, type: 'freight', color: '#A0522D', purchaseMultiplier: 2.0 },
     SLEEPER: { name: "寝台列車", maxSpeedKmH: 110, capacity: 200, maintenanceCostPerKm: 800, type: 'passenger', color: '#4B0082', purchaseMultiplier: 3.0, revenueMultiplier: 2.0 }, 
     TRAM: { name: "路面電車", maxSpeedKmH: 50, capacity: 150, maintenanceCostPerKm: 100, type: 'passenger', color: '#808080', purchaseMultiplier: 0.5 }, 
+    
+    // ★追加された5種類
+    TOURIST: { name: "観光列車", maxSpeedKmH: 80, capacity: 300, maintenanceCostPerKm: 500, type: 'passenger', color: '#FFD700', purchaseMultiplier: 1.8, revenueMultiplier: 2.5 }, 
+    HEAVY_FREIGHT: { name: "重量貨物", maxSpeedKmH: 60, capacity: 3000, maintenanceCostPerKm: 450, type: 'freight', color: '#696969', purchaseMultiplier: 1.5 },
+    INTERCITY: { name: "都市間特急", maxSpeedKmH: 200, capacity: 750, maintenanceCostPerKm: 1000, type: 'passenger', color: '#FFA500', purchaseMultiplier: 3.0 },
+    SUBWAY: { name: "地下鉄", maxSpeedKmH: 90, capacity: 400, maintenanceCostPerKm: 350, type: 'passenger', color: '#4682B4', purchaseMultiplier: 0.8 },
+    MIXED_CARGO: { name: "混載貨物", maxSpeedKmH: 90, capacity: 1000, maintenanceCostPerKm: 400, type: 'freight', color: '#556B2F', purchaseMultiplier: 1.3 },
 };
 
 // ★修正1: 遅延関数を追加 (Nominatimのレート制限回避のため)
@@ -186,9 +197,16 @@ async function loadPopulationTiff() {
     }
 }
 
+
+/**
+ * 緯度・経度からGeoTIFFの人口密度を取得
+ * @param {number} lat 緯度 (WGS84)
+ * @param {number} lng 経度 (WGS84)
+ * @returns {number} 人口密度 (人/km²)
+ */
 async function getPopulationDensityFromCoords(lat, lng) {
-    if (!tiffImage) return 50; 
-    // ... (GeoTIFF処理ロジックは変更なし)
+    if (!tiffImage) return 50; // ロード失敗時のデフォルト値
+
     try {
         let targetX = lng;
         let targetY = lat;
@@ -233,7 +251,7 @@ async function getPopulationDensityFromCoords(lat, lng) {
         }
 
         if (px < 0 || px >= rasterWidth || py < 0 || py >= rasterHeight) {
-            return 50; 
+            return 50; // 範囲外
         }
 
         const rasters = await tiffImage.readRasters({ window: [px, py, px + 1, py + 1] });
@@ -258,8 +276,14 @@ async function getPopulationDensityFromCoords(lat, lng) {
         return 50;
     }
 }
-
-// ... (calculateDemandFromPopulationDensity は変更なし)
+// =================================================================
+// ★ 人口密度に基づいた需要計算関数 (変更なし)
+// =================================================================
+/**
+ * 人口密度に基づいた需要を計算する
+ * @param {number} populationDensity 人口密度 (人/km²)
+ * @returns {{passenger: number, freight: number}} 月間需要
+ */
 function calculateDemandFromPopulationDensity(populationDensity) {
     const catchmentAreaKm2 = 2;
     const monthlyUseRate = 0.01;
@@ -309,7 +333,6 @@ async function getAddressFromCoords(lat, lng) {
         }
         return null;
     } catch (error) {
-        // エラーメッセージが汎用的な場合や、Axiosのエラーレスポンスがある場合を考慮
         let errorMessage = error.message || 'Unknown Network Error';
         if (error.response) {
             errorMessage = `${error.message} (Status: ${error.response.status})`;
@@ -319,7 +342,7 @@ async function getAddressFromCoords(lat, lng) {
     }
 }
 
-// ... (generateRegionalStationName, getDistanceKm, getElevation, calculateConstructionCost は変更なし)
+// ★修正: 駅名生成ロジック (変更なし)
 async function generateRegionalStationName(lat, lng) {
     const addressData = await getAddressFromCoords(lat, lng);
     
@@ -339,6 +362,7 @@ async function generateRegionalStationName(lat, lng) {
         return `${baseName}駅`;
     }
     
+    // 最終フォールバック
     const randomAreas = ["新興", "郊外", "住宅", "公園", "中央", "東", "西", "南", "北"];
     const randomSuffixes = ["台", "丘", "本", "前", "野", "ヶ原"];
     const area = randomAreas[Math.floor(Math.random() * randomAreas.length)];
@@ -346,6 +370,7 @@ async function generateRegionalStationName(lat, lng) {
     
     return `${area}${suffix}駅`;
 }
+
 
 function getDistanceKm(coord1, coord2) {
     const lngLat1 = [coord1[1], coord1[0]];
@@ -390,7 +415,6 @@ function calculateConstructionCost(coord1, coord2, trackType) {
 // B. サーバーサイド・クラス定義 (変更なし)
 // =================================================================
 class ServerStation {
-    // ... (変更なし)
     constructor(id, latlng, ownerId, type = 'Small', initialName = null, initialDemand = null) {
         this.id = id;
         this.latlng = latlng;
@@ -424,7 +448,6 @@ class ServerStation {
     get lng() { return this.latlng[1]; }
 }
 class ServerVehicle {
-    // ... (変更なし)
     constructor(id, line, data) {
         this.id = id;
         this.lineId = line.id;
@@ -609,7 +632,6 @@ class ServerVehicle {
     }
 }
 class ServerLineManager {
-    // ... (変更なし)
     constructor(id, ownerId, stations, coords, cost, lengthKm, color, trackType) {
         this.id = id;
         this.ownerId = ownerId;
@@ -629,7 +651,7 @@ class ServerLineManager {
             return { success: false, message: '資金不足' };
         }
         
-        const isLinear = data.name === 'リニア';
+        const isLinear = data.name.includes('リニア'); // リニア車両判定
         
         if (isLinear && this.trackType !== 'linear') {
              return { success: false, message: 'リニアは専用線路が必要です' };
@@ -1010,7 +1032,7 @@ async function serverSimulationLoop() {
     io.emit('rankingUpdate', await calculateRanking()); 
 }
 // =================================================================
-// D. ExpressとSocket.IOのセットアップ (変更なし)
+// D. ExpressとSocket.IOのセットアップ
 // =================================================================
 app.use(cookieParser());
 app.use(express.static(path.join(__dirname, 'public'))); 
@@ -1189,12 +1211,14 @@ io.on('connection', (socket) => {
         }
     });
     
+    // ★修正: 駅リネームイベントハンドラ (変更なし、クライアント側で即時反映は実装済み)
     socket.on('renameStation', async (data) => {
         if (!userId) return;
         
         const result = await renameStation(userId, data.stationId, data.newName);
         
         if (result.success) {
+            // 全クライアントに駅名変更を通知
             io.emit('stationRenamed', { 
                 id: data.stationId, 
                 newName: result.newName 
@@ -1462,6 +1486,11 @@ async function startServer() {
         }
         await loadGlobalStats();
         
+        // performance.now()が定義されていない環境（Node.jsの古いバージョンなど）への対応
+        if (typeof global.performance === 'undefined') {
+            global.performance = require('perf_hooks').performance;
+        }
+
         setInterval(serverSimulationLoop, 100); 
         server.listen(PORT, () => {
             console.log(`サーバーがポート ${PORT} で起動しました。人口データEPSG: ${populationCrsEpsg}`);
