@@ -305,43 +305,52 @@ function calculateDemandFromPopulationDensity(populationDensity) {
 
 // ★修正2: Nominatim APIからの地名取得関数 (エラーハンドリングを強化)
 async function getAddressFromCoords(lat, lng) {
-const url = `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lng}&format=json&zoom=16`;
-
+    const url = `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lng}&format=json&zoom=16`;
 try {
-    const response = await axios.get(url, {
-        headers: {
-            "User-Agent": "RailwayTycoonGameServer/1.0 (Contact: support@yourdomain.com)",
-            "Accept-Language": "ja,en"
-        }
-    });
-
-    const data = response.data;
-
-    if (data.address) {
-        const address = data.address;
-
-        let stationNameCandidate;
-        if (address.neighbourhood) stationNameCandidate = address.neighbourhood;
-        else if (address.suburb) stationNameCandidate = address.suburb;
-        else if (address.city_district) stationNameCandidate = address.city_district;
-        else if (address.town) stationNameCandidate = address.town;
-        else if (address.village) stationNameCandidate = address.village;
-        else if (address.city) stationNameCandidate = address.city;
-        else if (address.county) stationNameCandidate = address.county;
-        else stationNameCandidate = data.display_name.split(',')[0].trim();
-
-        return { stationNameCandidate };
+  const response = await axios.get(url, {
+    headers: {
+      "User-Agent": "RailwayTycoonGameServer/1.0 (Contact: support@yourdomain.com)",
+      "Accept-Language": "ja,en"
     }
+  });
 
-    return { stationNameCandidate: null };
+  const data = response.data;
+
+  if (data.address) {
+    const address = data.address;
+
+    let stationNameCandidate;
+    if (address.neighbourhood) stationNameCandidate = address.neighbourhood;
+    else if (address.suburb) stationNameCandidate = address.suburb;
+    else if (address.city_district) stationNameCandidate = address.city_district;
+    else if (address.town) stationNameCandidate = address.town;
+    else if (address.village) stationNameCandidate = address.village;
+    else if (address.city) stationNameCandidate = address.city;
+    else if (address.county) stationNameCandidate = address.county;
+    else stationNameCandidate = data.display_name.split(',')[0].trim();
+
+    return { stationNameCandidate };
+  }
+
+  return { stationNameCandidate: null };
 
 } catch (error) {
-    let errorMessage = error.message || 'Unknown Network Error';
+  if (axios.isAxiosError(error)) {
     if (error.response) {
-        errorMessage = `${error.message} (Status: ${error.response.status})`;
+      console.error('Nominatim API responded with error:');
+      console.error('Status:', error.response.status);
+      console.error('Headers:', error.response.headers);
+      console.error('Data:', error.response.data);
+    } else if (error.request) {
+      console.error('No response received from Nominatim:', error.request);
+    } else {
+      console.error('Axios error setting up request:', error.message);
     }
-    console.error("Error fetching address from Nominatim:", errorMessage);
-    return { stationNameCandidate: null };
+  } else {
+    console.error('Unexpected error:', error);
+  }
+
+  return { stationNameCandidate: null };
 }
 
 }
