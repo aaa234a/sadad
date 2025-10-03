@@ -7,8 +7,8 @@ const path = require('path');
 const turf = require('@turf/turf'); 
 const mongoose = require('mongoose');
 const axios = require('axios'); 
-const { fromUrl } = require('geotiff'); // ★ GeoTIFFライブラリ
-const proj4 = require('proj4'); // ★ 座標変換ライブラリ
+const { fromUrl } = require('geotiff'); 
+const proj4 = require('proj4'); 
 require('dotenv').config();
 
 const app = express();
@@ -37,7 +37,7 @@ async function connectDB() {
 }
 
 // --- Mongoose Schemas ---
-
+// (スキーマ定義は変更なし)
 const GlobalStatsSchema = new mongoose.Schema({
     _id: { type: Number, default: 1 },
     gameTime: { type: Date, default: Date.now },
@@ -122,8 +122,13 @@ const VehicleData = {
     TRAM: { name: "路面電車", maxSpeedKmH: 50, capacity: 150, maintenanceCostPerKm: 100, type: 'passenger', color: '#808080', purchaseMultiplier: 0.5 }, 
 };
 
+// ★修正1: 遅延関数を追加 (Nominatimのレート制限回避のため)
+function sleep(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+}
+
 // =================================================================
-// ★ GeoTIFF人口データ処理ロジック
+// ★ GeoTIFF人口データ処理ロジック (変更なし)
 // =================================================================
 const WORLDPOP_URL = 'https://drive.usercontent.google.com/download?id=1RXhkeCoPf5gDpz7kO40wn4x4646sXNqq&export=download&authuser=0&confirm=t&uuid=ad389895-3ad2-4345-a5b8-fdfc6a2bcdd6&at=AKSUxGN0g5r6LpggqZbcglzOt8PN:1759388822962';
 let tiffImage = null;
@@ -181,16 +186,9 @@ async function loadPopulationTiff() {
     }
 }
 
-
-/**
- * 緯度・経度からGeoTIFFの人口密度を取得
- * @param {number} lat 緯度 (WGS84)
- * @param {number} lng 経度 (WGS84)
- * @returns {number} 人口密度 (人/km²)
- */
 async function getPopulationDensityFromCoords(lat, lng) {
-    if (!tiffImage) return 50; // ロード失敗時のデフォルト値
-
+    if (!tiffImage) return 50; 
+    // ... (GeoTIFF処理ロジックは変更なし)
     try {
         let targetX = lng;
         let targetY = lat;
@@ -235,7 +233,7 @@ async function getPopulationDensityFromCoords(lat, lng) {
         }
 
         if (px < 0 || px >= rasterWidth || py < 0 || py >= rasterHeight) {
-            return 50; // 範囲外
+            return 50; 
         }
 
         const rasters = await tiffImage.readRasters({ window: [px, py, px + 1, py + 1] });
@@ -260,29 +258,17 @@ async function getPopulationDensityFromCoords(lat, lng) {
         return 50;
     }
 }
-// =================================================================
-// ★ 人口密度に基づいた需要計算関数
-// =================================================================
-/**
- * 人口密度に基づいた需要を計算する
- * @param {number} populationDensity 人口密度 (人/km²)
- * @returns {{passenger: number, freight: number}} 月間需要
- */
+
+// ... (calculateDemandFromPopulationDensity は変更なし)
 function calculateDemandFromPopulationDensity(populationDensity) {
-    // 旅客需要: 人口密度 (人/km²) を基に、駅の月間需要を計算
-    // 1km²あたりの人口密度から、駅の商圏（例: 2km²）の人口を推定し、そのうちの一定割合（例: 1%）が月間利用すると仮定
     const catchmentAreaKm2 = 2;
     const monthlyUseRate = 0.01;
     
     let localPopulation = populationDensity * catchmentAreaKm2;
     
-    // 旅客需要: 推定人口 * 月間利用率 * ランダム性
-    const passengerBase = Math.round(localPopulation * monthlyUseRate * (0.8 + Math.random() * 0.4)); // 0.8～1.2倍のランダム性
-    
-    // 貨物需要: 旅客需要の約1/10 (地域産業の規模を反映)
+    const passengerBase = Math.round(localPopulation * monthlyUseRate * (0.8 + Math.random() * 0.4)); 
     const freightBase = Math.round(passengerBase * 0.1 * (0.8 + Math.random() * 0.4));
     
-    // 最低需要を保証
     const passengerDemand = Math.max(50, passengerBase);
     const freightDemand = Math.max(10, freightBase);
     
@@ -293,9 +279,8 @@ function calculateDemandFromPopulationDensity(populationDensity) {
 }
 
 
-// ★修正: Nominatim APIからの地名取得関数 (市区町村名も取得)
+// ★修正2: Nominatim APIからの地名取得関数 (エラーハンドリングを強化)
 async function getAddressFromCoords(lat, lng) {
-    // OpenStreetMap Nominatim API (逆ジオコーディング)
     const url = `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lng}&format=json&accept-language=ja&zoom=16`;
     
     try {
@@ -308,7 +293,6 @@ async function getAddressFromCoords(lat, lng) {
         if (data.address) {
             const address = data.address;
             
-            // 優先度の高い地名を取得 (駅名生成用)
             let stationNameCandidate;
             if (address.neighbourhood) stationNameCandidate = address.neighbourhood;
             else if (address.suburb) stationNameCandidate = address.suburb;
@@ -325,12 +309,17 @@ async function getAddressFromCoords(lat, lng) {
         }
         return null;
     } catch (error) {
-        console.error("Error fetching address from Nominatim:", error.message);
+        // エラーメッセージが汎用的な場合や、Axiosのエラーレスポンスがある場合を考慮
+        let errorMessage = error.message || 'Unknown Network Error';
+        if (error.response) {
+            errorMessage = `${error.message} (Status: ${error.response.status})`;
+        }
+        console.error("Error fetching address from Nominatim:", errorMessage);
         return { stationNameCandidate: null };
     }
 }
 
-// ★修正: 駅名生成ロジックを非同期に戻し、Nominatimを使用
+// ... (generateRegionalStationName, getDistanceKm, getElevation, calculateConstructionCost は変更なし)
 async function generateRegionalStationName(lat, lng) {
     const addressData = await getAddressFromCoords(lat, lng);
     
@@ -350,7 +339,6 @@ async function generateRegionalStationName(lat, lng) {
         return `${baseName}駅`;
     }
     
-    // 最終フォールバック
     const randomAreas = ["新興", "郊外", "住宅", "公園", "中央", "東", "西", "南", "北"];
     const randomSuffixes = ["台", "丘", "本", "前", "野", "ヶ原"];
     const area = randomAreas[Math.floor(Math.random() * randomAreas.length)];
@@ -359,8 +347,6 @@ async function generateRegionalStationName(lat, lng) {
     return `${area}${suffix}駅`;
 }
 
-
-// ... (省略: getElevation, getDistanceKm, calculateConstructionCost)
 function getDistanceKm(coord1, coord2) {
     const lngLat1 = [coord1[1], coord1[0]];
     const lngLat2 = [coord2[1], coord2[0]];
@@ -404,7 +390,7 @@ function calculateConstructionCost(coord1, coord2, trackType) {
 // B. サーバーサイド・クラス定義 (変更なし)
 // =================================================================
 class ServerStation {
-    // ... (前回のコードと同じ)
+    // ... (変更なし)
     constructor(id, latlng, ownerId, type = 'Small', initialName = null, initialDemand = null) {
         this.id = id;
         this.latlng = latlng;
@@ -438,7 +424,7 @@ class ServerStation {
     get lng() { return this.latlng[1]; }
 }
 class ServerVehicle {
-    // ... (前回のコードと同じ)
+    // ... (変更なし)
     constructor(id, line, data) {
         this.id = id;
         this.lineId = line.id;
@@ -604,7 +590,6 @@ class ServerVehicle {
         let revenue = 0;
         const revenueMultiplier = this.data.revenueMultiplier || 1.0;
         
-        // 収益を約半分に減らす (5000 -> 2500, 2000 -> 1000)
         if (this.data.type === 'passenger') {
             revenue = station.demand.passenger * this.data.capacity / 100 * 2500 * revenueMultiplier; 
         } else if (this.data.type === 'freight') {
@@ -624,7 +609,7 @@ class ServerVehicle {
     }
 }
 class ServerLineManager {
-    // ... (前回のコードと同じ)
+    // ... (変更なし)
     constructor(id, ownerId, stations, coords, cost, lengthKm, color, trackType) {
         this.id = id;
         this.ownerId = ownerId;
@@ -702,7 +687,7 @@ const ServerGame = {
     VehicleData: VehicleData,
 };
 // =================================================================
-// C-1. DB操作関数 (Mongoose)
+// C-1. DB操作関数 (Mongoose) (変更なし)
 // =================================================================
 async function saveGlobalStats() {
     const stats = ServerGame.globalStats;
@@ -993,7 +978,7 @@ async function serverSimulationLoop() {
                 owner: user.userId,
                 latlng: [v.currentLat, v.currentLng], 
                 color: v.data.color,
-                status: v.status // 状態をクライアントに送信
+                status: v.status 
             });
         });
 
@@ -1025,10 +1010,10 @@ async function serverSimulationLoop() {
     io.emit('rankingUpdate', await calculateRanking()); 
 }
 // =================================================================
-// D. ExpressとSocket.IOのセットアップ
+// D. ExpressとSocket.IOのセットアップ (変更なし)
 // =================================================================
 app.use(cookieParser());
-app.use(express.static(path.join(__dirname, 'public'))); // publicフォルダにindex.htmlを配置
+app.use(express.static(path.join(__dirname, 'public'))); 
 app.post('/login', express.json(), async (req, res) => {
     const { username, password } = req.body;
     if (!username || username.length < 3 || !password) {
@@ -1110,7 +1095,7 @@ io.on('connection', (socket) => {
         })));
     });
     
-    // ★変更: buildStationを非同期に変更
+    // ★修正3: buildStationに遅延を追加
     socket.on('buildStation', async (data) => {
         if (!userId) return;
         const user = ServerGame.users[userId];
@@ -1140,10 +1125,11 @@ io.on('connection', (socket) => {
             const stationId = ServerGame.globalStats.nextStationId++;
             await saveGlobalStats();
             
-            // ★変更: 駅名と人口エリアを非同期で取得
+            // Nominatimのレート制限回避のため、少し待機
+            await sleep(500); 
+            
             const newStationName = await generateRegionalStationName(latlng[0], latlng[1]);
             
-            // ★変更: GeoTIFFから人口密度を取得し、需要を計算
             const populationDensity = await getPopulationDensityFromCoords(latlng[0], latlng[1]);
             const calculatedDemand = calculateDemandFromPopulationDensity(populationDensity);
             
@@ -1155,7 +1141,7 @@ io.on('connection', (socket) => {
                 lat: latlng[0],
                 lng: latlng[1],
                 name: newStation.name, 
-                demand: newStation.demand, // ★変更: 計算された需要を保存
+                demand: newStation.demand, 
                 lineConnections: newStation.lineConnections,
                 type: newStation.type, 
                 capacity: newStation.capacity 
@@ -1166,7 +1152,6 @@ io.on('connection', (socket) => {
             
             await saveUserFinancials(user.userId, user.money, user.totalConstructionCost);
             
-            // ★変更: demandを追加
             io.emit('stationBuilt', { 
                 latlng: data.latlng, id: newStation.id, ownerId: userId, type: newStation.type, capacity: newStation.capacity, name: newStation.name, demand: newStation.demand 
             });
@@ -1204,14 +1189,12 @@ io.on('connection', (socket) => {
         }
     });
     
-    // ★変更: 駅リネームイベントハンドラ
     socket.on('renameStation', async (data) => {
         if (!userId) return;
         
         const result = await renameStation(userId, data.stationId, data.newName);
         
         if (result.success) {
-            // 全クライアントに駅名変更を通知
             io.emit('stationRenamed', { 
                 id: data.stationId, 
                 newName: result.newName 
@@ -1359,11 +1342,10 @@ io.on('connection', (socket) => {
         }
     });
     
-    // ★追加: チャットメッセージの送信
     socket.on('sendMessage', async (data) => {
         if (!userId || !data.message || data.message.trim() === '') return;
         
-        const message = data.message.trim().substring(0, 200); // 200文字に制限
+        const message = data.message.trim().substring(0, 200); 
         
         try {
             const chatMessage = await ChatModel.create({
@@ -1372,7 +1354,6 @@ io.on('connection', (socket) => {
                 timestamp: new Date()
             });
             
-            // 全クライアントに新しいメッセージをブロードキャスト
             io.emit('newMessage', {
                 userId: chatMessage.userId,
                 message: chatMessage.message,
@@ -1435,25 +1416,27 @@ async function loadGlobalStats() {
         return station;
     });
     
-    // ★変更: 既存の仮駅名を持つ駅に対して、非同期で地名を取得し更新
-    const updatePromises = ServerGame.globalStats.stations
-        .filter(s => s.name.startsWith("仮駅名"))
-        .map(async (station) => {
-            const newName = await generateRegionalStationName(station.lat, station.lng);
-            
-            // GeoTIFFから人口密度を取得し、需要を再計算
-            const populationDensity = await getPopulationDensityFromCoords(station.lat, station.lng);
-            const newDemand = calculateDemandFromPopulationDensity(populationDensity);
-            
-            if (newName !== station.name || JSON.stringify(newDemand) !== JSON.stringify(station.demand)) {
-                station.name = newName;
-                station.demand = newDemand;
-                await StationModel.updateOne({ id: station.id }, { $set: { name: newName, demand: newDemand } });
-                console.log(`既存の仮駅名 ${station.id} を ${newName} に更新し、需要を再計算しました。 (人口密度: ${populationDensity})`);
-            }
-        });
+    // ★修正4: 既存の仮駅名を持つ駅に対して、逐次処理と遅延を導入して更新
+    const stationsToUpdate = ServerGame.globalStats.stations
+        .filter(s => s.name.startsWith("仮駅名"));
     
-    await Promise.all(updatePromises);
+    for (const station of stationsToUpdate) {
+        // Nominatimのレート制限を回避するため、リクエスト間に遅延を入れる
+        await sleep(1500); 
+        
+        const newName = await generateRegionalStationName(station.lat, station.lng);
+        
+        // GeoTIFFから人口密度を取得し、需要を再計算
+        const populationDensity = await getPopulationDensityFromCoords(station.lat, station.lng);
+        const newDemand = calculateDemandFromPopulationDensity(populationDensity);
+        
+        if (newName !== station.name || JSON.stringify(newDemand) !== JSON.stringify(station.demand)) {
+            station.name = newName;
+            station.demand = newDemand;
+            await StationModel.updateOne({ id: station.id }, { $set: { name: newName, demand: newDemand } });
+            console.log(`既存の仮駅名 ${station.id} を ${newName} に更新し、需要を再計算しました。 (人口密度: ${populationDensity})`);
+        }
+    }
 
 
     const allLinesRes = await LineModel.find({}).lean();
@@ -1473,7 +1456,7 @@ async function startServer() {
     try {
         await connectDB();
         await initializeDatabase();
-        await loadPopulationTiff(); // ★ GeoTIFFのロード
+        await loadPopulationTiff(); 
         if (!tiffImage) {
             console.warn('人口GeoTIFFが利用できないため、人口需要はデフォルト値になります。');
         }
