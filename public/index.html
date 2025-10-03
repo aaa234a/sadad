@@ -62,7 +62,7 @@
         overflow-y: auto; /* 縦方向のスクロールを有効にする */
       }
 
-      /* UIコンソール位置 */
+      /* UIコンソール位置 (右上) */
       #game-stats {
         top: 10px;
         right: 10px;
@@ -70,18 +70,21 @@
         line-height: 1.5;
       }
       
-      /* チャットパネル位置 */
+      /* チャットパネル位置 (右下) */
       #chat-panel {
         bottom: 10px;
         right: 10px;
         width: 300px;
+        max-height: 240px;
       }
       
-      /* ランキングパネル位置 (チャットパネルの上に配置) */
+      /* ランキングパネル位置 (チャットパネルの上) */
       #ranking-panel {
-        bottom: 250px; /* チャットパネルの高さ(約240px) + 10px */
+        bottom: 250px; 
         right: 10px;
         width: 300px;
+        max-height: 240px;
+        overflow-y: auto;
       }
 
       /* アコーディオンヘッダー */
@@ -165,16 +168,28 @@
         font-weight: bold;
       }
       
-      /* ★追加: 飛行機アイコン */
+      /* ★改良: 飛行機アイコン (回転対応のためtransform-originを設定) */
       .airplane-icon {
-        width: 16px;
-        height: 16px;
+        width: 24px; 
+        height: 24px;
         background-color: #007bff;
-        border-radius: 50%;
+        border-radius: 2px; 
         border: 2px solid #fff;
         box-shadow: 0 0 5px rgba(0, 0, 0, 0.8);
+        /* 飛行機らしい形状 */
+        clip-path: polygon(
+            50% 0%, 
+            60% 25%, 
+            100% 50%, 
+            60% 75%, 
+            50% 100%, 
+            40% 75%, 
+            0% 50%, 
+            40% 25%
+        ); 
+        /* transformはJSで上書きされるが、デフォルトを設定 */
         transform: translate(-50%, -50%);
-        clip-path: polygon(50% 0%, 60% 30%, 100% 50%, 60% 70%, 50% 100%, 40% 70%, 0% 50%, 40% 30%); 
+        transform-origin: 50% 50%; /* 回転の中心 */
       }
       
       .leaflet-container.station-mode,
@@ -207,6 +222,48 @@
       #info-message {
         background-color: #44aaff;
         color: white;
+      }
+      
+      /* ========================================================= */
+      /* UI重なり防止のためのメディアクエリ */
+      /* 画面幅が狭い場合 (モバイルなど) は縦に積み重ねる */
+      /* ========================================================= */
+      @media (max-width: 650px) {
+        .rail-ui-control,
+        #game-stats,
+        #ranking-panel,
+        #chat-panel {
+            width: 95%;
+            left: 2.5%;
+            right: auto;
+        }
+
+        /* 建設コントロール (左上) */
+        .rail-ui-control {
+            top: 10px;
+            max-height: 35vh; 
+        }
+
+        /* 統計情報 (建設の下) */
+        #game-stats {
+            top: auto;
+            bottom: 500px; /* チャット(240) + ランキング(240) + 20 */
+            max-height: 200px;
+            overflow-y: auto;
+        }
+
+        /* ランキング (チャットの上) */
+        #ranking-panel {
+            bottom: 250px;
+            max-height: 240px;
+            overflow-y: auto;
+        }
+
+        /* チャット (最下部) */
+        #chat-panel {
+            bottom: 10px;
+            max-height: 240px;
+        }
       }
     </style>
   </head>
@@ -410,7 +467,7 @@
         establishedLines: [],
         allLines: {}, 
         stations: [],
-        airports: [], // ★追加
+        airports: [], 
         vehicles: [],
         allVehicleMarkers: {}, // 列車と飛行機を統合
         mode: "idle",
@@ -498,7 +555,8 @@
                 s.type, 
                 s.capacity,
                 s.name, 
-                s.demand 
+                s.demand,
+                s.lineConnections // ★追加
               )
           );
           
@@ -511,7 +569,8 @@
                 a.ownerId,
                 a.type, 
                 a.capacity,
-                a.name 
+                a.name,
+                a.lineConnections // ★追加
               )
           );
         },
@@ -551,6 +610,7 @@
           const polylines = [];
 
           longitudeOffsets.forEach((offset) => {
+            // LeafletはL.latLngオブジェクトの配列を期待
             const offsetCoords = line.coords.map(coord => 
                 L.latLng(coord[0], coord[1] + offset)
             );
@@ -573,7 +633,7 @@
 
       // 鉄道駅クラス
       class Station {
-        constructor(id, latlng, map, ownerId, type = 'Small', capacity = 3, name, demand) {
+        constructor(id, latlng, map, ownerId, type = 'Small', capacity = 3, name, demand, lineConnections = []) {
           this.id = id;
           this.latlng = latlng;
           this.ownerId = ownerId;
@@ -581,6 +641,7 @@
           this.type = type; 
           this.capacity = capacity; 
           this.demand = demand; 
+          this.lineConnections = lineConnections; // ★追加
           this.markers = []; 
           this.isAirport = false;
 
@@ -624,6 +685,18 @@
             let popupContent = `<b>🚆 駅: ${this.name} (ID: ${this.id})</b><br>Owner: ${this.ownerId}`;
             popupContent += `<br>種類: ${this.type} (${this.capacity}列車)`;
             
+            // ★路線接続情報を表示
+            if (this.lineConnections && this.lineConnections.length > 0) {
+                popupContent += `<hr><b>接続路線: ${this.lineConnections.length}本</b>`;
+                const lineNames = this.lineConnections.map(lineId => {
+                    const line = Game.establishedLines.find(l => l.id === lineId);
+                    return line ? `Line ${lineId} (${line.trackType})` : `Line ${lineId}`;
+                }).join(', ');
+                popupContent += `<br><small>${lineNames}</small>`;
+            } else {
+                popupContent += `<br>接続路線: なし`;
+            }
+            
             if (this.demand) {
                 popupContent += `<hr><b>📊 需要</b><br>`;
                 popupContent += `旅客: ${this.demand.passenger.toLocaleString()}人/月<br>`;
@@ -657,13 +730,14 @@
       
       // 空港クラス ★追加
       class Airport {
-        constructor(id, latlng, map, ownerId, type = 'Small', capacity = 5, name) {
+        constructor(id, latlng, map, ownerId, type = 'Small', capacity = 5, name, lineConnections = []) {
           this.id = id;
           this.latlng = latlng;
           this.ownerId = ownerId;
           this.name = name; 
           this.type = type; 
           this.capacity = capacity; 
+          this.lineConnections = lineConnections; // ★追加
           this.markers = []; 
           this.isAirport = true;
 
@@ -708,7 +782,17 @@
             let popupContent = `<b>✈️ 空港: ${this.name} (ID: ${this.id})</b><br>Owner: ${this.ownerId}`;
             popupContent += `<br>種類: ${this.type} (${this.capacity}機)`;
             
-            // 空港の需要表示はサーバー側で実装が必要だが、ここでは省略
+            // ★路線接続情報を表示
+            if (this.lineConnections && this.lineConnections.length > 0) {
+                popupContent += `<hr><b>接続路線: ${this.lineConnections.length}本</b>`;
+                const lineNames = this.lineConnections.map(lineId => {
+                    const line = Game.establishedLines.find(l => l.id === lineId);
+                    return line ? `Line ${lineId} (${line.trackType})` : `Line ${lineId}`;
+                }).join(', ');
+                popupContent += `<br><small>${lineNames}</small>`;
+            } else {
+                popupContent += `<br>接続路線: なし`;
+            }
             
             if (this.ownerId === Game.userId) {
                 // 空港のアップグレードロジックはサーバー側で別途実装が必要
@@ -736,7 +820,6 @@
       // =========================================================
 
       function getCookie(name) {
-        // ... (既存の関数)
         const nameEQ = name + "=";
         const ca = document.cookie.split(";");
         for (let i = 0; i < ca.length; i++) {
@@ -749,7 +832,6 @@
       }
 
       async function handleLogin() {
-        // ... (既存の関数)
         const username = document.getElementById("username-input").value.trim();
         const password = document.getElementById("password-input").value.trim();
 
@@ -823,12 +905,12 @@
 
         // 駅/空港の建設イベント
         socket.on("stationBuilt", (data) => {
-          new Station(data.id, { lat: data.latlng.lat, lng: data.latlng.lng }, map, data.ownerId, data.type, data.capacity, data.name, data.demand); 
+          new Station(data.id, { lat: data.latlng[0], lng: data.latlng[1] }, map, data.ownerId, data.type, data.capacity, data.name, data.demand, data.lineConnections || []); 
           Game.updateGlobalStats({ globalStats: { stationsCount: Game.stations.length, airportsCount: Game.airports.length } });
         });
         
         socket.on("airportBuilt", (data) => {
-          new Airport(data.id, { lat: data.latlng.lat, lng: data.latlng.lng }, map, data.ownerId, data.type, data.capacity, data.name); 
+          new Airport(data.id, { lat: data.latlng[0], lng: data.latlng[1] }, map, data.ownerId, data.type, data.capacity, data.name, data.lineConnections || []); 
           Game.updateGlobalStats({ globalStats: { stationsCount: Game.stations.length, airportsCount: Game.airports.length } });
         });
         
@@ -932,40 +1014,55 @@
           
           const isAir = vehicle.category === 'air';
           const iconClass = isAir ? "airplane-icon" : "train-icon";
+          
+          // ★回転角度を適用
+          const rotationAngle = vehicle.rotation !== undefined ? vehicle.rotation : 0;
+          const rotationStyle = isAir 
+            ? `transform: translate(-50%, -50%) rotate(${rotationAngle}deg);`
+            : `transform: translate(-50%, -50%);`;
 
           const markerIcon = L.divIcon({
             className: iconClass,
             style: `background-color: ${vehicle.color}; border-color: ${
               vehicle.owner === Game.userId ? "yellow" : "white"
-            };`,
+            }; ${rotationStyle}`,
           });
           const popupContent = `${isAir ? '✈️' : '🚆'} 車両 #${vehicle.id} (Owner: ${vehicle.owner}) - Status: ${vehicle.status || 'Running'}`;
 
           longitudeOffsets.forEach((offset, index) => {
             const offsetLatLng = L.latLng(latlng.lat, latlng.lng + offset);
             let marker;
+            let currentMarkerData;
 
             if (index === 1) { 
-              if (!markerData.original) {
-                marker = L.marker(offsetLatLng, { icon: markerIcon }).addTo(map);
-                marker.bindPopup(popupContent);
-                markerData.original = marker;
-              } else {
-                markerData.original.setLatLng(offsetLatLng);
-                markerData.original.setIcon(markerIcon);
-                markerData.original.setPopupContent(popupContent);
-              }
+              currentMarkerData = markerData.original;
             } else { 
               const copyIndex = index === 0 ? 0 : 1;
-              if (!markerData.copies[copyIndex]) {
+              currentMarkerData = markerData.copies[copyIndex];
+            }
+
+            if (!currentMarkerData) {
                 marker = L.marker(offsetLatLng, { icon: markerIcon }).addTo(map);
                 marker.bindPopup(popupContent);
-                markerData.copies[copyIndex] = marker;
-              } else {
-                markerData.copies[copyIndex].setLatLng(offsetLatLng);
-                markerData.copies[copyIndex].setIcon(markerIcon);
-                markerData.copies[copyIndex].setPopupContent(popupContent);
-              }
+                
+                if (index === 1) {
+                    markerData.original = marker;
+                } else {
+                    const copyIndex = index === 0 ? 0 : 1;
+                    markerData.copies[copyIndex] = marker;
+                }
+            } else {
+                currentMarkerData.setLatLng(offsetLatLng);
+                currentMarkerData.setPopupContent(popupContent);
+                
+                // アイコンを更新して回転を適用
+                const newIcon = L.divIcon({
+                    className: iconClass,
+                    style: `background-color: ${vehicle.color}; border-color: ${
+                        vehicle.owner === Game.userId ? "yellow" : "white"
+                    }; ${rotationStyle}`, 
+                });
+                currentMarkerData.setIcon(newIcon);
             }
           });
         });
@@ -1002,12 +1099,13 @@
 
        function handleStationCreation(e) {
         if (Game.mode !== "station" || !socket) return;
-        socket.emit("buildStation", { latlng: e.latlng });
+        // サーバーは [lat, lng] 形式を期待
+        socket.emit("buildStation", { latlng: [e.latlng.lat, e.latlng.lng] });
       }
       
       function handleAirportCreation(e) {
         if (Game.mode !== "airport" || !socket) return;
-        socket.emit("buildAirport", { latlng: e.latlng });
+        socket.emit("buildAirport", { latlng: [e.latlng.lat, e.latlng.lng] });
       }
 
       function handleTerminalDismantle(terminal) {
@@ -1137,8 +1235,6 @@
           alert("航空路線には2つ以上のターミナルが必要です。");
           return;
         }
-        
-        // 航空路線は駅と空港を混在させても良いとする
         
         const terminalCoords = lineCandidateNodes.map((t) => [
           t.latlng.lat,
@@ -1399,8 +1495,10 @@
         content.classList.toggle("open");
         if (content.classList.contains("open")) {
           icon.textContent = "▼";
+          content.style.maxHeight = content.scrollHeight + "px";
         } else {
           icon.textContent = "▲";
+          content.style.maxHeight = "0";
         }
       };
       
