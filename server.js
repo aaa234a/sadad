@@ -8,7 +8,7 @@ const path = require('path');
 const turf = require('@turf/turf'); 
 const mongoose = require('mongoose');
 const axios = require('axios'); 
-const { fromUrl } = require('geotiff'); 
+const { fromUrl } = require('geotiff');
 const proj4 = require('proj4'); 
 require('dotenv').config();
 
@@ -305,7 +305,7 @@ function calculateDemandFromPopulationDensity(populationDensity) {
 
 // ★修正2: Nominatim APIからの地名取得関数 (エラーハンドリングを強化)
 async function getAddressFromCoords(lat, lng) {
-    const url = `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lng}&accept-language=ja,en&format=json&zoom=16`;
+      const url = `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lng}&format=json&accept-language=ja,en&zoom=16`;
     
     try {
         const response = await axios.get(url, {
