@@ -9,6 +9,7 @@ const mongoose = require('mongoose');
 const axios = require('axios'); 
 const { fromUrl } = require('geotiff');
 const proj4 = require('proj4'); 
+const { performance } = require('perf_hooks'); // Node.js v16以降ではグローバルにあることが多いが、明示的にインポート
 require('dotenv').config();
 
 const app = express();
@@ -42,7 +43,7 @@ const GlobalStatsSchema = new mongoose.Schema({
     _id: { type: Number, default: 1 },
     gameTime: { type: Date, default: Date.now },
     timeScale: { type: Number, default: 60 },
-    // IDカウンターをアトミックに管理するため、デフォルト値は1を設定
+    // IDカウンターのフィールドは残す
     nextStationId: { type: Number, default: 1 }, 
     nextLineId: { type: Number, default: 1 },
     nextVehicleId: { type: Number, default: 1 },
@@ -884,19 +885,32 @@ class ServerLineManager {
         user.vehicles.push(newVehicle);
         
         const dataKey = Object.keys(VehicleData).find(key => VehicleData[key] === newVehicle.data);
-        await VehicleModel.create({
-            id: newVehicle.id,
-            lineId: newVehicle.lineId,
-            ownerId: newVehicle.ownerId,
-            dataKey: dataKey,
-            positionKm: newVehicle.positionKm,
-            status: newVehicle.status,
-            isReversed: newVehicle.isReversed, 
-            stopTimer: newVehicle.stopTimer,
-            currentLat: newVehicle.currentLat,
-            currentLng: newVehicle.currentLng,
-            cargo: newVehicle.cargo
-        });
+        
+        try {
+            await VehicleModel.create({
+                id: newVehicle.id,
+                lineId: newVehicle.lineId,
+                ownerId: newVehicle.ownerId,
+                dataKey: dataKey,
+                positionKm: newVehicle.positionKm,
+                status: newVehicle.status,
+                isReversed: newVehicle.isReversed, 
+                stopTimer: newVehicle.stopTimer,
+                currentLat: newVehicle.currentLat,
+                currentLng: newVehicle.currentLng,
+                cargo: newVehicle.cargo
+            });
+        } catch (error) {
+            // IDの重複エラーが発生した場合、ログを出力し、IDを再取得して再試行する（ただし、今回は初期化で対応するため、ここではロジックを追加しない）
+            console.error(`Vehicle ID ${newVehicle.id} の挿入に失敗しました:`, error.message);
+            
+            // ユーザーの状態をロールバック
+            user.money += purchaseCost;
+            this.vehicles.pop();
+            user.vehicles.pop();
+            
+            return { success: false, message: '車両IDの重複により購入に失敗しました。サーバー管理者に連絡してください。' };
+        }
         
         await saveUserFinancials(user.userId, user.money, user.totalConstructionCost, user.loans);
         
@@ -918,7 +932,6 @@ const ServerGame = {
         airports: [], 
         allLines: [], 
         lastMonthlyMaintenance: 0,
-        // IDカウンターはDBのアトミック操作に移行するため、メモリ管理を削除
         newsFeed: [], 
     },
     VehicleData: VehicleData,
@@ -935,7 +948,7 @@ async function getNextId(counterName) {
     const result = await GlobalStatsModel.findOneAndUpdate(
         { _id: 1 },
         { $inc: { [counterName]: 1 } },
-        { new: true, upsert: true }
+        { new: true, upsert: true } // new: true で更新後の値を返す
     );
     return result[counterName];
 }
@@ -1721,7 +1734,7 @@ io.on('connection', (socket) => {
                 }
             }
 
-            // 修正: アトミックにIDを取得 (駅と同じカウンターを使用)
+            // 修正: アトミックにIDを取得
             const airportId = await getNextId('nextStationId'); 
             
             await sleep(500); 
@@ -2015,26 +2028,56 @@ io.on('connection', (socket) => {
 // =================================================================
 // E. サーバー起動ロジック
 // =================================================================
+
+/**
+ * 既存のコレクションから最大IDを取得し、GlobalStatsModelのカウンターを初期化する
+ */
 async function initializeDatabase() {
-    const count = await GlobalStatsModel.countDocuments({});
-    if (count === 0) {
-        // IDカウンターの初期値を設定
+    // 1. GlobalStatsModelの存在確認
+    let stats = await GlobalStatsModel.findById(1);
+
+    // 2. 最大IDの取得
+    const maxStationId = (await StationModel.findOne().sort({ id: -1 }).select('id').lean())?.id || 0;
+    const maxAirportId = (await AirportModel.findOne().sort({ id: -1 }).select('id').lean())?.id || 0;
+    const maxLineId = (await LineModel.findOne().sort({ id: -1 }).select('id').lean())?.id || 0;
+    const maxVehicleId = (await VehicleModel.findOne().sort({ id: -1 }).select('id').lean())?.id || 0;
+
+    const nextStationId = Math.max(maxStationId, maxAirportId) + 1;
+    const nextLineId = maxLineId + 1;
+    const nextVehicleId = maxVehicleId + 1;
+    
+    console.log(`DB最大ID: 駅/空港=${Math.max(maxStationId, maxAirportId)}, 路線=${maxLineId}, 車両=${maxVehicleId}`);
+    console.log(`カウンター初期値: nextStationId=${nextStationId}, nextLineId=${nextLineId}, nextVehicleId=${nextVehicleId}`);
+
+    if (!stats) {
+        // 存在しない場合は新規作成
         await GlobalStatsModel.create({
             _id: 1,
             gameTime: new Date(2025, 0, 1, 0, 0, 0),
             timeScale: 60,
-            nextStationId: 1,
-            nextLineId: 1,
-            nextVehicleId: 1
+            nextStationId: nextStationId,
+            nextLineId: nextLineId,
+            nextVehicleId: nextVehicleId
         });
+    } else {
+        // 存在する場合はカウンターを更新 (既存の値より大きい場合のみ)
+        const update = {};
+        if (stats.nextStationId < nextStationId) update.nextStationId = nextStationId;
+        if (stats.nextLineId < nextLineId) update.nextLineId = nextLineId;
+        if (stats.nextVehicleId < nextVehicleId) update.nextVehicleId = nextVehicleId;
+
+        if (Object.keys(update).length > 0) {
+            await GlobalStatsModel.updateOne({ _id: 1 }, { $set: update });
+            console.log("GlobalStatsカウンターを既存の最大IDに合わせて更新しました:", update);
+        }
     }
 }
+
 async function loadGlobalStats() {
     const statsRow = await GlobalStatsModel.findById(1).lean();
     if (statsRow) {
         ServerGame.globalStats.gameTime = new Date(statsRow.gameTime);
         ServerGame.globalStats.timeScale = statsRow.timeScale;
-        // IDカウンターはDBからアトミックに取得するため、メモリへのロードは不要
     }
 
     const stationsRes = await StationModel.find({}).lean();
@@ -2090,6 +2133,8 @@ async function loadGlobalStats() {
 async function startServer() {
     try {
         await connectDB();
+        
+        // データベースの初期化とカウンターの調整を最初に行う
         await initializeDatabase();
         
         // GeoTIFF関連のライブラリがNode.js環境で利用可能であることを確認してください
@@ -2104,8 +2149,9 @@ async function startServer() {
         
         await loadGlobalStats();
         
+        // Node.js v16以降ではグローバルにあることが多いが、念のためチェック
         if (typeof global.performance === 'undefined') {
-            global.performance = require('perf_hooks').performance;
+            global.performance = performance;
         }
 
         setInterval(serverSimulationLoop, 100); 
