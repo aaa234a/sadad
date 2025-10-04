@@ -20,6 +20,7 @@ const io = socketio(server);
 // 0. データベース接続とMongooseスキーマ定義
 // =================================================================
 
+// 環境変数 MONGO_URI は実行環境に合わせて設定してください
 const MONGO_URI = process.env.ENV_MONGO_URI || "mongodb+srv://ktyoshitu87_db_user:3137admin@cluster0.ag8sryr.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0";
 if (!MONGO_URI) {
     console.error("FATAL ERROR: MONGO_URI environment variable is not set.");
@@ -357,6 +358,7 @@ function getDistanceKm(coord1, coord2) {
     const lngLat2 = [coord2[1], coord2[0]];
     return turf.distance(turf.point(lngLat1), turf.point(lngLat2), {units: 'kilometers'});
 }
+
 function getElevation(lat, lng) {
     const TOKYO_BAY_LAT = 35.6;
     const TOKYO_BAY_LNG = 139.7;
@@ -366,6 +368,7 @@ function getElevation(lat, lng) {
     if (lat < 35.6) { elevation += 10 + (35.6 - lat) * 50; }
     return Math.round(Math.min(3000, Math.max(0, elevation)));
 }
+
 function calculateConstructionCost(coord1, coord2, trackType) {
     const distanceKm = getDistanceKm(coord1, coord2);
     if (distanceKm === 0) return { cost: 0, lengthKm: 0, terrainMultiplier: 1.0 };
@@ -397,7 +400,9 @@ function calculateConstructionCost(coord1, coord2, trackType) {
     const highElevationCost = Math.max(0, (elev1 + elev2) / 2 - 100) * 5000;
     const totalCost = baseCost + slopeCost + highElevationCost;
     
-    const terrainMultiplier = (slopeCost + highElevationCost) / (distanceKm * 2500000 * trackMultiplier);
+    // 地形補正率を計算 (ベースコストに対する追加コストの割合)
+    const baseCostWithoutTerrain = distanceKm * 2500000 * trackMultiplier;
+    const terrainMultiplier = baseCostWithoutTerrain > 0 ? (slopeCost + highElevationCost) / baseCostWithoutTerrain : 0;
     
     return { cost: Math.round(totalCost), lengthKm: distanceKm, terrainMultiplier: 1 + terrainMultiplier };
 }
@@ -703,17 +708,30 @@ class ServerVehicle {
         }
     }
     
+    // ★バグ修正2: 飛行機収益ロジックと積み込みロジックを修正
     handleTerminalArrival(terminal) {
         
         if (terminal.occupyingVehicles.size >= terminal.capacity) {
             this.status = 'Waiting';
             this.waitingForStationKm = this.getStationKm(terminal);
             terminal.isOverloaded = true; 
+            
+            io.emit('terminalUpdate', { 
+                id: terminal.id, 
+                isAirport: terminal.isAirport, 
+                isOverloaded: terminal.isOverloaded
+            });
             return;
         }
         
         // 停車する前に、過負荷状態を解除
         terminal.isOverloaded = false; 
+        
+        io.emit('terminalUpdate', { 
+            id: terminal.id, 
+            isAirport: terminal.isAirport, 
+            isOverloaded: terminal.isOverloaded
+        });
 
         terminal.occupyingVehicles.add(this.id);
         
@@ -728,11 +746,14 @@ class ServerVehicle {
             const distance = this.routeLength; 
             const baseRevenue = 5000; 
             
+            // 航空機の場合、長距離移動なので収益係数を調整
+            const revenueMultiplier = this.category === 'air' ? 5 : 1; 
+            
             if (this.data.type === 'passenger') {
-                revenue += this.cargo.passenger * distance * baseRevenue / 100;
+                revenue += this.cargo.passenger * distance * baseRevenue / 100 * revenueMultiplier;
                 this.cargo.passenger = 0;
             } else if (this.data.type === 'freight') {
-                revenue += this.cargo.freight * distance * baseRevenue / 500;
+                revenue += this.cargo.freight * distance * baseRevenue / 500 * revenueMultiplier;
                 this.cargo.freight = 0;
             }
             this.cargo.destinationTerminalId = null;
@@ -745,16 +766,37 @@ class ServerVehicle {
                 const nextDestination = availableTerminals[Math.floor(Math.random() * availableTerminals.length)];
                 this.cargo.destinationTerminalId = nextDestination.id;
                 
-                if (this.data.type === 'passenger' && !terminal.isAirport) {
+                const isRailTerminal = !terminal.isAirport;
+                
+                if (this.data.type === 'passenger') {
                     const availableCapacity = this.data.capacity - this.cargo.passenger;
-                    const loadAmount = Math.min(availableCapacity, terminal.demand.passenger * 0.1); 
+                    let loadAmount = 0;
+                    
+                    if (isRailTerminal) {
+                        // 鉄道駅の場合: 駅の需要を参照
+                        loadAmount = Math.min(availableCapacity, terminal.demand.passenger * 0.1); 
+                        terminal.isDemandHigh = terminal.demand.passenger > this.data.capacity * 2; 
+                        io.emit('terminalUpdate', { id: terminal.id, isAirport: false, isDemandHigh: terminal.isDemandHigh });
+                    } else { 
+                        // 空港の場合: 容量の一定割合を積み込む (航空機収益バグ修正)
+                        loadAmount = Math.min(availableCapacity, this.data.capacity * 0.5 * (0.8 + Math.random() * 0.4));
+                    }
                     this.cargo.passenger += Math.round(loadAmount);
-                    terminal.isDemandHigh = terminal.demand.passenger > this.data.capacity * 2; 
-                } else if (this.data.type === 'freight' && !terminal.isAirport) {
+                    
+                } else if (this.data.type === 'freight') {
                     const availableCapacity = this.data.capacity - this.cargo.freight;
-                    const loadAmount = Math.min(availableCapacity, terminal.demand.freight * 0.1);
+                    let loadAmount = 0;
+                    
+                    if (isRailTerminal) {
+                        // 鉄道駅の場合: 駅の需要を参照
+                        loadAmount = Math.min(availableCapacity, terminal.demand.freight * 0.1);
+                        terminal.isDemandHigh = terminal.demand.freight > this.data.capacity * 2;
+                        io.emit('terminalUpdate', { id: terminal.id, isAirport: false, isDemandHigh: terminal.isDemandHigh });
+                    } else {
+                         // 空港の場合: 容量の一定割合を積み込む (航空機収益バグ修正)
+                        loadAmount = Math.min(availableCapacity, this.data.capacity * 0.5 * (0.8 + Math.random() * 0.4));
+                    }
                     this.cargo.freight += Math.round(loadAmount);
-                    terminal.isDemandHigh = terminal.demand.freight > this.data.capacity * 2;
                 }
             }
         }
@@ -908,6 +950,26 @@ async function saveUserFinancials(userId, money, totalConstructionCost, loans = 
     });
 }
 
+async function renameTerminal(userId, terminalId, newName, isAirport) {
+    const user = ServerGame.users[userId];
+    if (!user) return { success: false, message: "ユーザーが見つかりません。" };
+    
+    const terminalArray = isAirport ? ServerGame.globalStats.airports : ServerGame.globalStats.stations;
+    const Model = isAirport ? AirportModel : StationModel;
+    
+    const globalTerminal = terminalArray.find(t => t.id === terminalId && t.ownerId === userId);
+    if (!globalTerminal) return { success: false, message: "あなたのターミナルが見つかりません。" };
+    
+    globalTerminal.name = newName;
+    
+    await Model.updateOne(
+        { id: terminalId },
+        { $set: { name: newName } }
+    );
+    
+    return { success: true, newName: newName, message: `${newName} に名称を変更しました。` };
+}
+
 async function saveVehiclePositions() {
     const bulkOps = [];
     
@@ -971,8 +1033,11 @@ async function loadUserData(userId) {
     const lineManagers = linesRes.map(row => {
         const coords = row.coords; 
         
+        // 路線に接続されているターミナルを特定するために、座標が一致するターミナルを見つける
         const terminalCoords = coords.filter((coord, index) => {
+            // 始点と終点は必ずターミナル
             if (index === 0 || index === coords.length - 1) return true;
+            // 中間点もターミナルである可能性がある（路線が複数のターミナルを経由する場合）
             return allTerminals.some(t => t.latlng[0] === coord[0] && t.latlng[1] === coord[1]);
         });
 
@@ -1023,6 +1088,7 @@ async function calculateRanking() {
         const totalLoanRemaining = loans.reduce((sum, loan) => sum + (loan?.remaining ?? 0), 0);
 
         const baseMoney = typeof user.money === 'number' ? user.money : 0;
+        // 総資産 = 資金 + 建設投資額 * 70% + 車両資産 - 負債
         const score = baseMoney + totalConstructionCost * 0.7 + vehicleCount * 10_000_000 - totalLoanRemaining;
 
         return {
@@ -1144,6 +1210,7 @@ async function checkTerminalStatus() {
         }
         
         if (!terminal.isAirport) {
+            // 駅の需要は、車両容量の200倍を超えたら高いと見なす
             const isDemandHigh = terminal.demand.passenger > terminal.capacity * 200 || terminal.demand.freight > terminal.capacity * 200;
             if (terminal.isDemandHigh !== isDemandHigh) {
                 terminal.isDemandHigh = isDemandHigh;
@@ -1233,6 +1300,13 @@ async function dismantleLine(userId, lineId) {
                 { id: globalTerminal.id },
                 { $set: { lineConnections: globalTerminal.lineConnections } }
             ));
+            
+            // 接続路線情報が変更されたことをクライアントに通知
+            io.emit('terminalUpdate', { 
+                id: globalTerminal.id, 
+                isAirport: globalTerminal.isAirport, 
+                lineConnections: globalTerminal.lineConnections 
+            });
         }
     }
     await Promise.all(updatePromises);
@@ -1502,25 +1576,31 @@ io.on('connection', (socket) => {
         
         let totalCost = 0;
         let totalLengthKm = 0;
+        let totalTerrainMultiplier = 0; 
         
         for (let i = 1; i < data.coords.length; i++) {
             const coord1 = data.coords[i-1];
             const coord2 = data.coords[i];
-            const { cost: segCost, lengthKm: segLength } = calculateConstructionCost(coord1, coord2, data.trackType);
+            // ★機能追加: 地形補正を計算に含める
+            const { cost: segCost, lengthKm: segLength, terrainMultiplier: segTerrain } = calculateConstructionCost(coord1, coord2, data.trackType);
             totalCost += segCost;
             totalLengthKm += segLength;
+            totalTerrainMultiplier += segTerrain;
         }
         
         if (data.trackType === 'air') {
             totalCost += 100000000; 
         }
         
-        callback({ success: true, totalCost: totalCost, totalLengthKm: totalLengthKm });
+        const avgTerrainMultiplier = totalTerrainMultiplier / (data.coords.length - 1);
+        
+        callback({ success: true, totalCost: totalCost, totalLengthKm: totalLengthKm, avgTerrainMultiplier: avgTerrainMultiplier });
     });
     
     socket.on('requestLoan', async (data) => {
         if (!userId) return;
         
+        const amountM = data.amount / 1000000;
         const result = await handleLoanRequest(userId, data.amount, data.termMonths);
         
         if (result.success) {
@@ -1794,6 +1874,13 @@ io.on('connection', (socket) => {
                     { id: terminal.id },
                     { $set: { lineConnections: terminal.lineConnections } }
                 ));
+                
+                // ★バグ修正1対応: 接続路線情報をリアルタイムで通知
+                io.emit('terminalUpdate', { 
+                    id: terminal.id, 
+                    isAirport: terminal.isAirport, 
+                    lineConnections: terminal.lineConnections 
+                });
             }
             await Promise.all(updatePromises);
 
@@ -1993,10 +2080,17 @@ async function startServer() {
     try {
         await connectDB();
         await initializeDatabase();
-        await loadPopulationTiff(); 
-        if (!tiffImage) {
-            console.warn('人口GeoTIFFが利用できないため、人口需要はデフォルト値になります。');
+        
+        // GeoTIFF関連のライブラリがNode.js環境で利用可能であることを確認してください
+        if (typeof fromUrl !== 'undefined') {
+            await loadPopulationTiff(); 
+            if (!tiffImage) {
+                console.warn('人口GeoTIFFが利用できないため、人口需要はデフォルト値になります。');
+            }
+        } else {
+             console.warn('GeoTIFFライブラリが見つからないため、人口需要はデフォルト値になります。');
         }
+        
         await loadGlobalStats();
         
         if (typeof global.performance === 'undefined') {
