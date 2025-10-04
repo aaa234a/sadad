@@ -816,7 +816,6 @@
                 popupContent += `<br><span style="color: red; font-weight: bold;">⚠️ 容量超過!</span>`;
             }
             
-            // ★バグ修正1対応: lineConnectionsを参照
             if (this.lineConnections && this.lineConnections.length > 0) {
                 popupContent += `<hr><b>接続路線: ${this.lineConnections.length}本</b>`;
             } else {
@@ -914,7 +913,6 @@
                 popupContent += `<br><span style="color: red; font-weight: bold;">⚠️ 容量超過!</span>`;
             }
             
-            // ★バグ修正1対応: lineConnectionsを参照
             if (this.lineConnections && this.lineConnections.length > 0) {
                 popupContent += `<hr><b>接続路線: ${this.lineConnections.length}本</b>`;
             } else {
@@ -1324,7 +1322,7 @@
                   document.getElementById("construction-distance").textContent = `${currentConstructionDistance.toFixed(2)} km`;
                   document.getElementById("construction-cost").textContent = `¥${Math.round(currentConstructionCost).toLocaleString()}`;
                   
-                  // ★機能追加: 地形補正を表示
+                  // 地形補正を表示
                   const terrainPercent = ((result.avgTerrainMultiplier - 1) * 100).toFixed(1);
                   document.getElementById("construction-terrain").textContent = `${terrainPercent}%`;
               }
@@ -1399,7 +1397,6 @@
           return;
         }
         
-        // 航空路線は強制的に 'air' タイプとして送信
         const terminalCoords = lineCandidateNodes.map((t) => [
           t.latlng.lat,
           t.latlng.lng,
@@ -1479,29 +1476,41 @@
           socket.emit('requestLoan', { amount: amount, termMonths: termMonths });
       };
 
-
+      // ★路線解体ロジックを修正し、Turf.jsを使ってポリライン全体への最短距離を計算
       function handleLineDismantle(e) {
         if (Game.mode !== "dismantle-line" || !socket) return;
 
         let closestLineId = null;
         let minDistance = Infinity;
-        const lineSearchRadiusMeters = 50; 
+        // 50メートルをキロメートルに変換 (Turf.jsの距離単位に合わせる)
+        const lineSearchRadiusKm = 0.05; 
+
+        // クリックした座標をTurfのポイント形式 (LngLat) に変換
+        const clickPoint = turf.point([e.latlng.lng, e.latlng.lat]);
 
         Object.entries(Game.allLines).forEach(([lineId, polylines]) => {
+          // polylinesはオフセットされた3つのポリラインを含む配列
           polylines.forEach(polyline => {
               if (!polyline) return;
 
+              // LeafletのLatLngsをTurfのLineString形式 (LngLat) に変換
               const latlngs = polyline.getLatLngs();
-              latlngs.forEach((latlng) => {
-                  const dist = e.latlng.distanceTo(latlng);
-                  
-                  if (dist < minDistance && dist < lineSearchRadiusMeters) {
-                      minDistance = dist;
-                      closestLineId = lineId;
-                  }
-              });
+              const coords = latlngs.map(ll => [ll.lng, ll.lat]);
+              
+              if (coords.length < 2) return;
+
+              const line = turf.lineString(coords);
+              
+              // クリック点からポリラインまでの最短距離を計算 (キロメートル単位)
+              const distanceKm = turf.pointToLineDistance(clickPoint, line, { units: 'kilometers' });
+              
+              if (distanceKm < minDistance && distanceKm < lineSearchRadiusKm) {
+                  minDistance = distanceKm;
+                  closestLineId = lineId;
+              }
           });
         });
+
 
         if (!closestLineId) {
           alert("クリックした位置の近くに解体できる路線が見つかりません。");
