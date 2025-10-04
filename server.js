@@ -1230,7 +1230,7 @@ async function checkTerminalStatus() {
 }
 
 async function triggerRandomEvent() {
-    if (Math.random() < 0.1) { 
+    if (Math.random() < 0.005) { 
         const allStations = ServerGame.globalStats.stations;
         if (allStations.length === 0) return;
         
