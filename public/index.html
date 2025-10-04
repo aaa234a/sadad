@@ -654,8 +654,8 @@
                 s.name, 
                 s.demand,
                 s.lineConnections,
-                s.isOverloaded, // ★追加
-                s.isDemandHigh // ★追加
+                s.isOverloaded, 
+                s.isDemandHigh 
               )
           );
           
@@ -670,7 +670,7 @@
                 a.capacity,
                 a.name,
                 a.lineConnections,
-                a.isOverloaded // ★追加
+                a.isOverloaded 
               )
           );
         },
@@ -763,8 +763,8 @@
           this.demand = demand; 
           this.lineConnections = lineConnections; 
           this.isAirport = false;
-          this.isOverloaded = isOverloaded;
-          this.isDemandHigh = isDemandHigh;
+          this.isOverloaded = isOverloaded; 
+          this.isDemandHigh = isDemandHigh; 
           this.markers = []; 
 
           this.drawMarkers(map);
@@ -816,6 +816,7 @@
                 popupContent += `<br><span style="color: red; font-weight: bold;">⚠️ 容量超過!</span>`;
             }
             
+            // ★バグ修正1対応: lineConnectionsを参照
             if (this.lineConnections && this.lineConnections.length > 0) {
                 popupContent += `<hr><b>接続路線: ${this.lineConnections.length}本</b>`;
             } else {
@@ -913,6 +914,7 @@
                 popupContent += `<br><span style="color: red; font-weight: bold;">⚠️ 容量超過!</span>`;
             }
             
+            // ★バグ修正1対応: lineConnectionsを参照
             if (this.lineConnections && this.lineConnections.length > 0) {
                 popupContent += `<hr><b>接続路線: ${this.lineConnections.length}本</b>`;
             } else {
@@ -1322,8 +1324,9 @@
                   document.getElementById("construction-distance").textContent = `${currentConstructionDistance.toFixed(2)} km`;
                   document.getElementById("construction-cost").textContent = `¥${Math.round(currentConstructionCost).toLocaleString()}`;
                   
-                  // 地形補正はサーバー側での計算結果を基に表示可能だが、ここでは簡略化のため省略
-                  document.getElementById("construction-terrain").textContent = `計算中...`;
+                  // ★機能追加: 地形補正を表示
+                  const terrainPercent = ((result.avgTerrainMultiplier - 1) * 100).toFixed(1);
+                  document.getElementById("construction-terrain").textContent = `${terrainPercent}%`;
               }
           });
       }
@@ -1396,6 +1399,7 @@
           return;
         }
         
+        // 航空路線は強制的に 'air' タイプとして送信
         const terminalCoords = lineCandidateNodes.map((t) => [
           t.latlng.lat,
           t.latlng.lng,
