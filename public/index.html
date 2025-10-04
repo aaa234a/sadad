@@ -145,14 +145,14 @@
         margin-bottom: 10px;
       }
 
-      /* 列車アイコンの調整 */
+      /* 列車アイコンの調整: 丸から長方形に変更 */
       .train-icon {
-        width: 12px;
-        height: 12px;
-        border-radius: 50%;
+        width: 18px; /* 列車らしい長さに */
+        height: 8px; /* 列車らしい細さに */
+        border-radius: 2px; /* 角を少し丸める */
         border: 2px solid #fff;
         box-shadow: 0 0 5px rgba(0, 0, 0, 0.8);
-        transform: translate(-50%, -50%);
+        transform: translate(-50%, -50%); /* 中央に配置 */
       }
       .station-icon {
         background-color: #000;
@@ -189,14 +189,15 @@
       .airport-icon.normal { background-color: #007bff; }
       .airport-icon.overload { background-color: #FF0000; }
 
-      /* ★改良: 飛行機アイコン (回転対応) */
+      /* ★改良: 飛行機アイコン (回転対応) - 形状を維持しつつ色を調整 */
       .airplane-icon {
         width: 24px; 
         height: 24px;
-        background-color: #007bff;
+        background-color: #5bc0de; /* 飛行機らしい水色系 */
         border-radius: 2px; 
         border: 2px solid #fff;
         box-shadow: 0 0 5px rgba(0, 0, 0, 0.8);
+        /* 矢印のような形状をクリップパスで定義 */
         clip-path: polygon(
             50% 0%, 
             60% 25%, 
@@ -1150,6 +1151,8 @@
           const iconClass = isAir ? "airplane-icon" : "train-icon";
           
           const rotationAngle = vehicle.rotation !== undefined ? vehicle.rotation : 0;
+          
+          // 列車アイコンは回転させない（長方形の視認性維持のため）
           const rotationStyle = isAir 
             ? `transform: translate(-50%, -50%) rotate(${rotationAngle}deg);`
             : `transform: translate(-50%, -50%);`;
