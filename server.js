@@ -708,7 +708,7 @@ class ServerVehicle {
         }
     }
     
-    // ★バグ修正2: 飛行機収益ロジックと積み込みロジックを修正
+    // 飛行機収益ロジックと積み込みロジックを修正済み
     handleTerminalArrival(terminal) {
         
         if (terminal.occupyingVehicles.size >= terminal.capacity) {
@@ -1581,7 +1581,7 @@ io.on('connection', (socket) => {
         for (let i = 1; i < data.coords.length; i++) {
             const coord1 = data.coords[i-1];
             const coord2 = data.coords[i];
-            // ★機能追加: 地形補正を計算に含める
+            // 地形補正を計算に含める
             const { cost: segCost, lengthKm: segLength, terrainMultiplier: segTerrain } = calculateConstructionCost(coord1, coord2, data.trackType);
             totalCost += segCost;
             totalLengthKm += segLength;
@@ -1875,7 +1875,7 @@ io.on('connection', (socket) => {
                     { $set: { lineConnections: terminal.lineConnections } }
                 ));
                 
-                // ★バグ修正1対応: 接続路線情報をリアルタイムで通知
+                // 接続路線情報をリアルタイムで通知
                 io.emit('terminalUpdate', { 
                     id: terminal.id, 
                     isAirport: terminal.isAirport, 
