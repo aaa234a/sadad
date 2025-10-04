@@ -42,7 +42,8 @@ const GlobalStatsSchema = new mongoose.Schema({
     _id: { type: Number, default: 1 },
     gameTime: { type: Date, default: Date.now },
     timeScale: { type: Number, default: 60 },
-    nextStationId: { type: Number, default: 1 },
+    // IDカウンターをアトミックに管理するため、デフォルト値は1を設定
+    nextStationId: { type: Number, default: 1 }, 
     nextLineId: { type: Number, default: 1 },
     nextVehicleId: { type: Number, default: 1 },
 }, { collection: 'global_stats' });
@@ -875,8 +876,8 @@ class ServerLineManager {
         
         user.money -= purchaseCost;
         
-        const vehicleId = ServerGame.globalStats.nextVehicleId++;
-        await saveGlobalStats();
+        // 修正: アトミックにIDを取得
+        const vehicleId = await getNextId('nextVehicleId');
         
         const newVehicle = new ServerVehicle(vehicleId, this, data); 
         this.vehicles.push(newVehicle);
@@ -917,9 +918,7 @@ const ServerGame = {
         airports: [], 
         allLines: [], 
         lastMonthlyMaintenance: 0,
-        nextStationId: 1,
-        nextLineId: 1,
-        nextVehicleId: 1,
+        // IDカウンターはDBのアトミック操作に移行するため、メモリ管理を削除
         newsFeed: [], 
     },
     VehicleData: VehicleData,
@@ -927,15 +926,27 @@ const ServerGame = {
 // =================================================================
 // C-1. DB操作関数 (Mongoose)
 // =================================================================
+
+/**
+ * MongoDBのカウンターをアトミックにインクリメントし、新しい値を取得する
+ * @param {string} counterName - GlobalStatsModel内のカウンターフィールド名
+ */
+async function getNextId(counterName) {
+    const result = await GlobalStatsModel.findOneAndUpdate(
+        { _id: 1 },
+        { $inc: { [counterName]: 1 } },
+        { new: true, upsert: true }
+    );
+    return result[counterName];
+}
+
+// IDカウンターの保存処理を削除し、ゲーム時間と倍速のみを保存するように修正
 async function saveGlobalStats() {
     const stats = ServerGame.globalStats;
     await GlobalStatsModel.updateOne({ _id: 1 }, {
         $set: {
             gameTime: stats.gameTime,
             timeScale: stats.timeScale,
-            nextStationId: stats.nextStationId,
-            nextLineId: stats.nextLineId,
-            nextVehicleId: stats.nextVehicleId,
         }
     }, { upsert: true }); 
 }
@@ -1638,8 +1649,8 @@ io.on('connection', (socket) => {
                 }
             }
 
-            const stationId = ServerGame.globalStats.nextStationId++;
-            await saveGlobalStats();
+            // 修正: アトミックにIDを取得
+            const stationId = await getNextId('nextStationId');
             
             await sleep(500); 
             
@@ -1710,8 +1721,8 @@ io.on('connection', (socket) => {
                 }
             }
 
-            const airportId = ServerGame.globalStats.nextStationId++; 
-            await saveGlobalStats();
+            // 修正: アトミックにIDを取得 (駅と同じカウンターを使用)
+            const airportId = await getNextId('nextStationId'); 
             
             await sleep(500); 
             const newAirportName = await generateRegionalStationName(latlng[0], latlng[1], true);
@@ -1799,8 +1810,9 @@ io.on('connection', (socket) => {
         if (!userId || data.terminalCoords.length < 2) return;
         
         const user = ServerGame.users[userId];
-        const lineId = ServerGame.globalStats.nextLineId++;
-        await saveGlobalStats(); 
+        
+        // 修正: アトミックにIDを取得
+        const lineId = await getNextId('nextLineId');
         
         const lineColor = LINE_COLORS[lineId % LINE_COLORS.length];
         const trackType = data.trackType;
@@ -2006,6 +2018,7 @@ io.on('connection', (socket) => {
 async function initializeDatabase() {
     const count = await GlobalStatsModel.countDocuments({});
     if (count === 0) {
+        // IDカウンターの初期値を設定
         await GlobalStatsModel.create({
             _id: 1,
             gameTime: new Date(2025, 0, 1, 0, 0, 0),
@@ -2021,9 +2034,7 @@ async function loadGlobalStats() {
     if (statsRow) {
         ServerGame.globalStats.gameTime = new Date(statsRow.gameTime);
         ServerGame.globalStats.timeScale = statsRow.timeScale;
-        ServerGame.globalStats.nextStationId = statsRow.nextStationId;
-        ServerGame.globalStats.nextLineId = statsRow.nextLineId;
-        ServerGame.globalStats.nextVehicleId = statsRow.nextVehicleId;
+        // IDカウンターはDBからアトミックに取得するため、メモリへのロードは不要
     }
 
     const stationsRes = await StationModel.find({}).lean();
