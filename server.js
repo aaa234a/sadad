@@ -20,6 +20,18 @@ const PORT = process.env.PORT || 3000;
 const server = http.createServer(app);
 const io = socketio(server);
 
+const ADMIN_USER_IDS = new Set(
+    (process.env.ADMIN_USERS || 'admin')
+        .split(',')
+        .map((id) => id.trim())
+        .filter(Boolean)
+);
+const COMMAND_PREFIX = '/';
+
+function isAdminUser(userId) {
+    return !!userId && ADMIN_USER_IDS.has(userId);
+}
+
 // =================================================================
 // 0. データベース接続とMongooseスキーマ定義
 // =================================================================
@@ -138,6 +150,229 @@ const ChatSchema = new mongoose.Schema({
 }, { collection: 'chat_messages' });
 const ChatModel = mongoose.model('Chat', ChatSchema);
 
+function parseCommand(input) {
+    const body = input.slice(COMMAND_PREFIX.length).trim();
+    if (!body) {
+        return { command: '', args: [], rawArgs: '' };
+    }
+    const firstSpace = body.indexOf(' ');
+    if (firstSpace === -1) {
+        const command = body.toLowerCase();
+        return { command, args: [], rawArgs: '' };
+    }
+    const command = body.slice(0, firstSpace).toLowerCase();
+    const rawArgs = body.slice(firstSpace + 1).trim();
+    const args = rawArgs.length ? rawArgs.split(/\s+/) : [];
+    return { command, args, rawArgs };
+}
+
+function parseNumberInput(value) {
+    if (typeof value !== 'string') return Number.NaN;
+    const normalized = value.replace(/[,\uFF0C]/g, '');
+    const number = Number(normalized);
+    return Number.isFinite(number) ? number : Number.NaN;
+}
+
+async function ensureUserCached(userId) {
+    if (!userId) return null;
+    if (!ServerGame.users[userId]) {
+        const loaded = await loadUserData(userId);
+        if (loaded) {
+            ServerGame.users[userId] = loaded;
+        }
+    }
+    return ServerGame.users[userId] || null;
+}
+
+async function broadcastSystemMessage(message) {
+    const trimmed = message.substring(0, 200);
+    const timestamp = new Date();
+    await ChatModel.create({
+        userId: 'SYSTEM',
+        message: trimmed,
+        timestamp,
+    });
+    io.emit('newMessage', {
+        userId: 'SYSTEM',
+        message: trimmed,
+        timestamp: timestamp.toISOString(),
+    });
+}
+
+function emitUsage(socket, usage) {
+    socket.emit('error', `使用方法: ${usage}`);
+}
+
+async function handleServerCommand({ command, args, rawArgs, socket, userId }) {
+    switch (command) {
+        case 'money':
+        case 'monery': {
+            if (args.length < 2) {
+                emitUsage(socket, '/money <userId> <amount>');
+                return;
+            }
+            const targetUserId = args[0];
+            const amount = parseNumberInput(args[1]);
+            if (!Number.isFinite(amount)) {
+                socket.emit('error', '金額の形式が正しくありません。');
+                return;
+            }
+            const targetUser = await ensureUserCached(targetUserId);
+            if (!targetUser) {
+                socket.emit('error', `ユーザー ${targetUserId} が見つかりません。`);
+                return;
+            }
+            targetUser.money = Math.round(amount);
+            targetUser.moneyUpdated = true;
+            await saveUserFinancials(targetUser.userId, targetUser.money, targetUser.totalConstructionCost, targetUser.loans);
+            socket.emit('info', `${targetUserId} の所持金を ¥${targetUser.money.toLocaleString()} に設定しました。`);
+            if (targetUser.socketId) {
+                io.to(targetUser.socketId).emit('info', `管理者によって所持金が ¥${targetUser.money.toLocaleString()} に変更されました。`);
+            }
+            return;
+        }
+        case 'stationname': {
+            if (!rawArgs) {
+                emitUsage(socket, '/stationname <stationId> <newName>');
+                return;
+            }
+            const firstSpace = rawArgs.indexOf(' ');
+            if (firstSpace === -1) {
+                emitUsage(socket, '/stationname <stationId> <newName>');
+                return;
+            }
+            const stationIdValue = rawArgs.slice(0, firstSpace);
+            const newName = rawArgs.slice(firstSpace + 1).trim().substring(0, 50);
+            const stationId = parseInt(stationIdValue, 10);
+            if (!Number.isFinite(stationId)) {
+                socket.emit('error', '駅IDの形式が正しくありません。');
+                return;
+            }
+            const station = ServerGame.globalStats.stations.find((s) => s.id === stationId);
+            if (!station) {
+                socket.emit('error', `駅ID ${stationId} が見つかりません。`);
+                return;
+            }
+            station.name = newName;
+            await StationModel.updateOne({ id: stationId }, { $set: { name: newName } });
+            io.emit('terminalRenamed', { id: stationId, newName, isAirport: false });
+            socket.emit('info', `駅ID ${stationId} の名称を ${newName} に変更しました。`);
+            return;
+        }
+        case 'timescale': {
+            if (args.length < 1) {
+                emitUsage(socket, '/timescale <value>');
+                return;
+            }
+            const value = parseNumberInput(args[0]);
+            if (!Number.isFinite(value) || value <= 0) {
+                socket.emit('error', 'ゲーム速度は正の数で指定してください。');
+                return;
+            }
+            const clamped = Math.min(3600, Math.max(0.1, value));
+            ServerGame.globalStats.timeScale = clamped;
+            socket.emit('info', `ゲーム速度を x${clamped.toFixed(2)} に設定しました。`);
+            await broadcastSystemMessage(`ゲーム速度が x${clamped.toFixed(2)} に変更されました。`);
+            return;
+        }
+        case 'demand': {
+            if (args.length < 3) {
+                emitUsage(socket, '/demand <stationId> <passenger> <freight>');
+                return;
+            }
+            const stationId = parseInt(args[0], 10);
+            const passenger = parseNumberInput(args[1]);
+            const freight = parseNumberInput(args[2]);
+            if (!Number.isFinite(stationId) || !Number.isFinite(passenger) || !Number.isFinite(freight)) {
+                socket.emit('error', '需要コマンドのパラメータが正しくありません。');
+                return;
+            }
+            const station = ServerGame.globalStats.stations.find((s) => s.id === stationId);
+            if (!station) {
+                socket.emit('error', `駅ID ${stationId} が見つかりません。`);
+                return;
+            }
+            station.demand = {
+                passenger: Math.max(0, Math.round(passenger)),
+                freight: Math.max(0, Math.round(freight)),
+            };
+            await StationModel.updateOne({ id: stationId }, { $set: { demand: station.demand } });
+            io.emit('terminalUpdate', {
+                id: stationId,
+                isAirport: false,
+                demand: station.demand,
+            });
+            socket.emit('info', `駅ID ${stationId} の需要を更新しました。`);
+            return;
+        }
+        case 'announce': {
+            if (!rawArgs) {
+                emitUsage(socket, '/announce <message>');
+                return;
+            }
+            await broadcastSystemMessage(rawArgs);
+            socket.emit('info', 'システムメッセージを送信しました。');
+            return;
+        }
+        case 'givevehicle': {
+            if (args.length < 3) {
+                emitUsage(socket, '/givevehicle <userId> <lineId> <vehicleKey> [formationSize]');
+                return;
+            }
+            const targetUserId = args[0];
+            const lineId = parseInt(args[1], 10);
+            const vehicleKey = args[2].toUpperCase();
+            const formationSizeArg = args[3] ? parseInt(args[3], 10) : 1;
+            const formationSize = Number.isFinite(formationSizeArg) && formationSizeArg > 0 ? formationSizeArg : 1;
+            if (!Number.isFinite(lineId)) {
+                socket.emit('error', '路線IDの形式が正しくありません。');
+                return;
+            }
+            const targetUser = await ensureUserCached(targetUserId);
+            if (!targetUser) {
+                socket.emit('error', `ユーザー ${targetUserId} が見つかりません。`);
+                return;
+            }
+            const line = targetUser.establishedLines.find((l) => l.id === lineId);
+            if (!line) {
+                socket.emit('error', `ユーザー ${targetUserId} の路線 ${lineId} が見つかりません。`);
+                return;
+            }
+            const result = await line.addVehicle(vehicleKey, formationSize);
+            if (!result.success) {
+                socket.emit('error', `車両付与に失敗しました: ${result.message}`);
+                return;
+            }
+            socket.emit('info', `${targetUserId} に ${vehicleKey} を付与しました (編成数: ${formationSize})。`);
+            if (targetUser.socketId) {
+                io.to(targetUser.socketId).emit('info', `管理者により ${vehicleKey} (編成数: ${formationSize}) が付与されました。`);
+            }
+            return;
+        }
+        case 'settime': {
+            if (!rawArgs) {
+                emitUsage(socket, '/settime <YYYY-MM-DD> [HH:MM]');
+                return;
+            }
+            const isoCandidate = rawArgs.replace(' ', 'T');
+            const newTime = new Date(isoCandidate);
+            if (Number.isNaN(newTime.getTime())) {
+                socket.emit('error', '日時の形式が正しくありません。');
+                return;
+            }
+            ServerGame.globalStats.gameTime = newTime;
+            socket.emit('info', `ゲーム内時間を ${newTime.toISOString()} に設定しました。`);
+            await broadcastSystemMessage(`ゲーム内時間が ${newTime.toISOString()} に更新されました。`);
+            return;
+        }
+        case 'help':
+            socket.emit('info', '利用可能なコマンド: /money, /stationname, /timescale, /demand, /announce, /givevehicle, /settime');
+            return;
+        default:
+            socket.emit('error', `不明なコマンドです: ${command}`);
+            return;
+    }
+}
 
 // =================================================================
 // A. サーバーサイド・ゲーム定数とユーティリティ
@@ -2068,16 +2303,43 @@ io.on('connection', (socket) => {
     
     socket.on('sendMessage', async (data) => {
         if (!userId || !data.message || data.message.trim() === '') return;
-        
-        const message = data.message.trim().substring(0, 200); 
-        
+
+        const rawMessage = data.message.trim().substring(0, 200);
+
+        if (rawMessage.startsWith(COMMAND_PREFIX)) {
+            const parsed = parseCommand(rawMessage);
+            if (!parsed.command) {
+                socket.emit('error', '無効なコマンドです。');
+                return;
+            }
+
+            if (!isAdminUser(userId)) {
+                socket.emit('error', 'コマンドを実行する権限がありません。');
+                return;
+            }
+
+            try {
+                await handleServerCommand({
+                    command: parsed.command,
+                    args: parsed.args,
+                    rawArgs: parsed.rawArgs,
+                    socket,
+                    userId,
+                });
+            } catch (error) {
+                console.error('Command execution failed:', error);
+                socket.emit('error', 'コマンド実行中にエラーが発生しました。');
+            }
+            return;
+        }
+
         try {
             const chatMessage = await ChatModel.create({
                 userId: userId,
-                message: message,
+                message: rawMessage,
                 timestamp: new Date()
             });
-            
+
             io.emit('newMessage', {
                 userId: chatMessage.userId,
                 message: chatMessage.message,
