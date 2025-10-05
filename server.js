@@ -2029,12 +2029,15 @@ io.on('connection', (socket) => {
             });
             if (!isAdminBuilder) {
                 socket.emit('updateUserState', { 
-                money: user.money,
-                totalConstructionCost: user.totalConstructionCost,
-                currentLoan: user.currentLoan,
-                monthlyRepayment: user.monthlyRepayment,
-                vehicles: user.vehicles.map(v => ({ id: v.id, data: v.data })), 
-            });
+                    money: user.money,
+                    totalConstructionCost: user.totalConstructionCost,
+                    currentLoan: user.currentLoan,
+                    monthlyRepayment: user.monthlyRepayment,
+                    vehicles: user.vehicles.map(v => ({ id: v.id, data: v.data })), 
+                });
+            } else {
+                socket.emit('info', `${newStation.name} を共有駅として建設しました。`);
+            }
         } catch (error) {
             console.error("buildStation error:", error);
             socket.emit('error', '駅の建設中にエラーが発生しました。');
