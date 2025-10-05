@@ -33,7 +33,9 @@ function isAdminUser(userId) {
 }
 
 function isAdminOwnedTerminal(terminal) {
-    return terminal?.ownerId && isAdminUser(terminal.ownerId);
+    if (!terminal || !terminal.ownerId) return false;
+    if (terminal.ownerId === 'ADMIN_SHARED') return true;
+    return isAdminUser(terminal.ownerId);
 }
 
 // =================================================================
@@ -1004,18 +1006,6 @@ class ServerVehicle {
             const deliveredFreight = this.cargo.freight;
             const deliveredLoad = this.data.type === 'passenger' ? deliveredPassengers : deliveredFreight;
 
-            const destinationOwnerIsAdmin = terminal.isAirport ? isAdminUser(terminal.ownerId) : isAdminOwnedTerminal(terminal);
-            const shouldShareRevenue = destinationOwnerIsAdmin;
-            let ownerUser = ServerGame.users[this.ownerId];
-            let revenueRecipient = ownerUser;
-            if (shouldShareRevenue) {
-                const trainOwner = await ensureUserCached(this.ownerId);
-                if (trainOwner) {
-                    revenueRecipient = trainOwner;
-                    ownerUser = trainOwner;
-                }
-            }
-
             if (deliveredLoad > 0) {
                 const baseRate = this.data.type === 'passenger'
                     ? REVENUE_SETTINGS.passengerPerKm
@@ -1053,12 +1043,6 @@ class ServerVehicle {
                 multiplier *= 1 + (this.formationSize - 1) * REVENUE_SETTINGS.formationBonusPerCar;
 
                 revenue += Math.round(deliveredLoad * distance * baseRate * multiplier);
-            }
-
-            if (shouldShareRevenue && revenueRecipient && revenueRecipient !== ownerUser) {
-                revenueRecipient.money = (revenueRecipient.money || 0) + revenue;
-                revenueRecipient.moneyUpdated = true;
-                await saveUserFinancials(revenueRecipient.userId, revenueRecipient.money, revenueRecipient.totalConstructionCost, revenueRecipient.loans);
             }
 
             this.cargo.passenger = 0;
