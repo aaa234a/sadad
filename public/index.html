@@ -1279,11 +1279,12 @@
       }
       
       function handleTrackNodeClick(station) {
+        if (station.ownerId !== "ADMIN_SHARED")
           if (station.ownerId !== Game.userId) {
             alert("他プレイヤーの駅は路線のノードとして使用できません。");
             return;
           }
-
+      }
           if (lineCandidateNodes.includes(station)) return;
 
           lineCandidateNodes.push(station);
