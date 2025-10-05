@@ -294,7 +294,7 @@ async function getPopulationDensityFromCoords(lat, lng) {
 }
 function calculateDemandFromPopulationDensity(populationDensity) {
     const catchmentAreaKm2 = 2;
-    const monthlyUseRate = 0.05; // ★修正: 0.01 から 0.05 に変更し、需要発生量を増加
+    const monthlyUseRate = 5; // ★修正: 0.01 から 0.05 に変更し、需要発生量を増加
     let localPopulation = populationDensity * catchmentAreaKm2;
     const passengerBase = Math.round(localPopulation * monthlyUseRate * (0.8 + Math.random() * 0.4)); 
     const freightBase = Math.round(passengerBase * 0.1 * (0.8 + Math.random() * 0.4));
