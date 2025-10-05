@@ -1,6 +1,5 @@
 
 
-
 // server.js
 const express = require('express');
 const http = require('http');
@@ -82,6 +81,8 @@ const StationSchema = new mongoose.Schema({
         passenger: Number,
         freight: Number
     },
+    waitingPassenger: { type: Number, default: 0 }, // ★追加
+    waitingFreight: { type: Number, default: 0 },   // ★追加
     lineConnections: [Number],
     type: { type: String, enum: ['Small', 'Medium', 'Large'], default: 'Small' },
     capacity: { type: Number, default: 3 }, 
@@ -122,7 +123,7 @@ const VehicleSchema = new mongoose.Schema({
     stopTimer: Number,
     currentLat: Number,
     currentLng: Number,
-    formationSize: { type: Number, default: 1 }, // ★ 追加
+    formationSize: { type: Number, default: 1 }, 
     cargo: { 
         passenger: { type: Number, default: 0 },
         freight: { type: Number, default: 0 },
@@ -148,7 +149,7 @@ const VEHICLE_BASE_COST = 8000000;
 const AIRPLANE_BASE_COST = 50000000;
 const LINE_COLORS = ['#E4007F', '#009933', '#0000FF', '#FFCC00', '#FF6600', '#9900CC'];
 const MAX_LOAN_RATE = 0.5; 
-const ANNUAL_INTEREST_RATE = 0.10; // ★ 10%に引き上げ
+const ANNUAL_INTEREST_RATE = 0.10; // 10%
 
 const VehicleData = {
     COMMUTER: { name: "通勤形", maxSpeedKmH: 100, capacity: 500, maintenanceCostPerKm: 400, type: 'passenger', category: 'rail', color: '#008000', purchaseMultiplier: 1.0, maxFormation: 10 }, 
@@ -163,9 +164,9 @@ const VehicleData = {
     HEAVY_FREIGHT: { name: "重量貨物", maxSpeedKmH: 60, capacity: 3000, maintenanceCostPerKm: 450, type: 'freight', category: 'rail', color: '#696969', purchaseMultiplier: 1.5, maxFormation: 30 }, 
     INTERCITY: { name: "都市間特急", maxSpeedKmH: 200, capacity: 750, maintenanceCostPerKm: 1000, type: 'passenger', category: 'rail', color: '#FFA500', purchaseMultiplier: 3.0, maxFormation: 10 }, 
     SUBWAY: { name: "地下鉄", maxSpeedKmH: 90, capacity: 400, maintenanceCostPerKm: 350, type: 'passenger', category: 'rail', color: '#4682B4', purchaseMultiplier: 0.8, maxFormation: 8 }, 
-    MIXED_CARGO: { name: "混載貨物", maxSpeedKmH: 90, capacity: 1000, maintenanceCostPerKm: 400, type: 'freight', category: 'rail', color: '#556B2F', purchaseMultiplier: 1.3, maxFormation: 18 }, 
+    MIXED_CARGO: { name: "混載貨物", maxSpeedKmH: 90, capacity: 1000, maintenanceCostPerKm: 400, type: 'freight', category: 'rail', color: '#556B2F', purchaseMultiplier: 1.3, maxFormation: 18 },
     
-    // 飛行機データ (編成は1固定とする)
+    // 飛行機データ
     SMALL_JET: { name: "小型ジェット", maxSpeedKmH: 800, capacity: 150, maintenanceCostPerKm: 5000, type: 'passenger', category: 'air', color: '#00FFFF', purchaseMultiplier: 5.0, maxFormation: 1 },
     CARGO_PLANE: { name: "貨物機", maxSpeedKmH: 650, capacity: 50000, maintenanceCostPerKm: 4000, type: 'freight', category: 'air', color: '#808000', purchaseMultiplier: 7.0, maxFormation: 1 },
     JUMBO_JET: { name: "大型旅客機", maxSpeedKmH: 900, capacity: 500, maintenanceCostPerKm: 8000, type: 'passenger', category: 'air', color: '#FFFFFF', purchaseMultiplier: 15.0, maxFormation: 1 },
@@ -238,9 +239,6 @@ async function loadPopulationTiff() {
         rasterWidth = tiffImage.getWidth();
         rasterHeight = tiffImage.getHeight();
         
-        // 簡略化のため、CRS判定ロジックは省略し、4326をデフォルトとする
-        // 実際の運用ではGeoTIFFのメタデータからCRSを正確に読み取る必要があります。
-        
         console.log(`GeoTIFFロード完了。サイズ: ${rasterWidth}x${rasterHeight}`);
     } catch (error) {
         console.error("GeoTIFFのロード中にエラーが発生しました。人口需要はデフォルト値を使用します。", error.message);
@@ -254,8 +252,6 @@ async function getPopulationDensityFromCoords(lat, lng) {
     try {
         let targetX = lng;
         let targetY = lat;
-        
-        // 座標変換ロジックは複雑なため、今回は4326固定として簡略化
         
         let px;
         let py;
@@ -411,7 +407,7 @@ function calculateConstructionCost(coord1, coord2, trackType) {
 // B. サーバーサイド・クラス定義
 // =================================================================
 class ServerStation {
-    constructor(id, latlng, ownerId, type = 'Small', initialName = null, initialDemand = null, lineConnections = [], isOverloaded = false, isDemandHigh = false) {
+    constructor(id, latlng, ownerId, type = 'Small', initialName = null, initialDemand = null, lineConnections = [], isOverloaded = false, isDemandHigh = false, waitingPassenger = 0, waitingFreight = 0) {
         this.id = id;
         this.latlng = latlng;
         this.ownerId = ownerId;
@@ -427,6 +423,8 @@ class ServerStation {
         this.isAirport = false;
         this.isOverloaded = isOverloaded; 
         this.isDemandHigh = isDemandHigh; 
+        this.waitingPassenger = waitingPassenger; // ★追加
+        this.waitingFreight = waitingFreight;     // ★追加
     }
     getCapacityByType(type) {
         switch (type) {
@@ -484,8 +482,8 @@ class ServerVehicle {
         this.lineId = line.id;
         this.ownerId = line.ownerId;
         this.data = data;
-        this.formationSize = formationSize; // ★ 編成数を保持
-        this.capacity = data.capacity * formationSize; // ★ 容量を編成数で乗算
+        this.formationSize = formationSize; 
+        this.capacity = data.capacity * formationSize; 
         this.category = data.category;
         this.coords = line.coords;
         this.terminals = line.stations; 
@@ -710,7 +708,6 @@ class ServerVehicle {
         }
     }
     
-    // 飛行機収益ロジックと積み込みロジックを修正済み
     handleTerminalArrival(terminal) {
         
         if (terminal.occupyingVehicles.size >= terminal.capacity) {
@@ -726,7 +723,6 @@ class ServerVehicle {
             return;
         }
         
-        // 停車する前に、過負荷状態を解除
         terminal.isOverloaded = false; 
         
         io.emit('terminalUpdate', { 
@@ -748,7 +744,6 @@ class ServerVehicle {
             const distance = this.routeLength; 
             const baseRevenue = 5000; 
             
-            // 航空機の場合、長距離移動なので収益係数を調整
             const revenueMultiplier = this.category === 'air' ? 5 : 1; 
             
             if (this.data.type === 'passenger') {
@@ -771,32 +766,36 @@ class ServerVehicle {
                 const isRailTerminal = !terminal.isAirport;
                 
                 if (this.data.type === 'passenger') {
-                    const availableCapacity = this.capacity - this.cargo.passenger; // ★ this.capacityを使用
+                    const availableCapacity = this.capacity - this.cargo.passenger; 
                     let loadAmount = 0;
                     
                     if (isRailTerminal) {
-                        // 鉄道駅の場合: 駅の需要を参照
-                        loadAmount = Math.min(availableCapacity, terminal.demand.passenger * 0.1); 
-                        terminal.isDemandHigh = terminal.demand.passenger > this.capacity * 2; // ★ this.capacityを使用
-                        io.emit('terminalUpdate', { id: terminal.id, isAirport: false, isDemandHigh: terminal.isDemandHigh });
+                        // 鉄道駅の場合: 待機人数から積み込み
+                        loadAmount = Math.min(availableCapacity, terminal.waitingPassenger);
+                        terminal.waitingPassenger -= loadAmount;
+                        
+                        terminal.isDemandHigh = terminal.waitingPassenger > this.capacity * 2; 
+                        io.emit('terminalUpdate', { id: terminal.id, isAirport: false, isDemandHigh: terminal.isDemandHigh, waitingPassenger: terminal.waitingPassenger });
                     } else { 
-                        // 空港の場合: 容量の一定割合を積み込む (航空機収益バグ修正)
-                        loadAmount = Math.min(availableCapacity, this.capacity * 0.5 * (0.8 + Math.random() * 0.4)); // ★ this.capacityを使用
+                        // 空港の場合: 容量の一定割合を積み込む (簡略化)
+                        loadAmount = Math.min(availableCapacity, this.capacity * 0.5 * (0.8 + Math.random() * 0.4));
                     }
                     this.cargo.passenger += Math.round(loadAmount);
                     
                 } else if (this.data.type === 'freight') {
-                    const availableCapacity = this.capacity - this.cargo.freight; // ★ this.capacityを使用
+                    const availableCapacity = this.capacity - this.cargo.freight;
                     let loadAmount = 0;
                     
                     if (isRailTerminal) {
-                        // 鉄道駅の場合: 駅の需要を参照
-                        loadAmount = Math.min(availableCapacity, terminal.demand.freight * 0.1);
-                        terminal.isDemandHigh = terminal.demand.freight > this.capacity * 2; // ★ this.capacityを使用
-                        io.emit('terminalUpdate', { id: terminal.id, isAirport: false, isDemandHigh: terminal.isDemandHigh });
+                        // 鉄道駅の場合: 待機貨物量から積み込み
+                        loadAmount = Math.min(availableCapacity, terminal.waitingFreight);
+                        terminal.waitingFreight -= loadAmount;
+                        
+                        terminal.isDemandHigh = terminal.waitingFreight > this.capacity * 2;
+                        io.emit('terminalUpdate', { id: terminal.id, isAirport: false, isDemandHigh: terminal.isDemandHigh, waitingFreight: terminal.waitingFreight });
                     } else {
-                         // 空港の場合: 容量の一定割合を積み込む (航空機収益バグ修正)
-                        loadAmount = Math.min(availableCapacity, this.capacity * 0.5 * (0.8 + Math.random() * 0.4)); // ★ this.capacityを使用
+                         // 空港の場合: 容量の一定割合を積み込む (簡略化)
+                        loadAmount = Math.min(availableCapacity, this.capacity * 0.5 * (0.8 + Math.random() * 0.4));
                     }
                     this.cargo.freight += Math.round(loadAmount);
                 }
@@ -850,12 +849,11 @@ class ServerLineManager {
         this.trackType = trackType;
         this.vehicles = [];
     }
-    async addVehicle(vehicleKey, formationSize = 1) { // ★ formationSizeを追加
+    async addVehicle(vehicleKey, formationSize = 1) { 
         const data = VehicleData[vehicleKey];
         const isAir = data.category === 'air';
         const baseCost = isAir ? AIRPLANE_BASE_COST : VEHICLE_BASE_COST;
         
-        // コストを編成数で乗算
         const purchaseCost = baseCost * data.purchaseMultiplier * formationSize; 
         const user = ServerGame.users[this.ownerId];
         
@@ -879,10 +877,9 @@ class ServerLineManager {
         
         user.money -= purchaseCost;
         
-        // 修正: アトミックにIDを取得
         const vehicleId = await getNextId('nextVehicleId');
         
-        const newVehicle = new ServerVehicle(vehicleId, this, data, formationSize); // ★ formationSizeを渡す
+        const newVehicle = new ServerVehicle(vehicleId, this, data, formationSize); 
         this.vehicles.push(newVehicle);
         user.vehicles.push(newVehicle);
         
@@ -901,12 +898,11 @@ class ServerLineManager {
                 currentLat: newVehicle.currentLat,
                 currentLng: newVehicle.currentLng,
                 cargo: newVehicle.cargo,
-                formationSize: formationSize // ★ DBスキーマに保存
+                formationSize: formationSize 
             });
         } catch (error) {
             console.error(`Vehicle ID ${newVehicle.id} の挿入に失敗しました:`, error.message);
             
-            // ユーザーの状態をロールバック
             user.money += purchaseCost;
             this.vehicles.pop();
             user.vehicles.pop();
@@ -1060,11 +1056,8 @@ async function loadUserData(userId) {
     const lineManagers = linesRes.map(row => {
         const coords = row.coords; 
         
-        // 路線に接続されているターミナルを特定するために、座標が一致するターミナルを見つける
         const terminalCoords = coords.filter((coord, index) => {
-            // 始点と終点は必ずターミナル
             if (index === 0 || index === coords.length - 1) return true;
-            // 中間点もターミナルである可能性がある（路線が複数のターミナルを経由する場合）
             return allTerminals.some(t => t.latlng[0] === coord[0] && t.latlng[1] === coord[1]);
         });
 
@@ -1085,8 +1078,8 @@ async function loadUserData(userId) {
         const line = user.establishedLines.find(l => l.id === row.lineId);
         if (line) {
             const data = VehicleData[row.dataKey];
-            const formationSize = row.formationSize || 1; // ★ formationSizeを取得
-            const vehicle = new ServerVehicle(row.id, line, data, formationSize, row.cargo); // ★ formationSizeを渡す
+            const formationSize = row.formationSize || 1; 
+            const vehicle = new ServerVehicle(row.id, line, data, formationSize, row.cargo); 
             
             vehicle.positionKm = row.positionKm;
             vehicle.status = row.status;
@@ -1140,9 +1133,59 @@ async function calculateRanking() {
         .slice(0, 10);
 }
 
+async function processMonthlyDemandGeneration() {
+    const stationsToUpdate = [];
+    
+    for (const station of ServerGame.globalStats.stations) {
+        // 毎月、需要を待機人数に加算
+        station.waitingPassenger += station.demand.passenger;
+        station.waitingFreight += station.demand.freight;
+        
+        // 待機人数が多すぎる場合、需要高フラグを立てる（クライアント通知用）
+        const isDemandHigh = station.waitingPassenger > 50000 || station.waitingFreight > 50000;
+        if (station.isDemandHigh !== isDemandHigh) {
+            station.isDemandHigh = isDemandHigh;
+        }
+
+        stationsToUpdate.push({
+            id: station.id,
+            waitingPassenger: station.waitingPassenger,
+            waitingFreight: station.waitingFreight,
+            isDemandHigh: station.isDemandHigh
+        });
+    }
+    
+    if (stationsToUpdate.length > 0) {
+        const bulkOps = stationsToUpdate.map(s => ({
+            updateOne: {
+                filter: { id: s.id },
+                update: { 
+                    $set: { 
+                        waitingPassenger: s.waitingPassenger, 
+                        waitingFreight: s.waitingFreight 
+                    } 
+                }
+            }
+        }));
+        await StationModel.bulkWrite(bulkOps);
+        
+        // クライアントに待機人数と需要高フラグの更新を通知
+        stationsToUpdate.forEach(s => {
+            io.emit('terminalUpdate', { 
+                id: s.id, 
+                isAirport: false, 
+                waitingPassenger: s.waitingPassenger,
+                waitingFreight: s.waitingFreight,
+                isDemandHigh: s.isDemandHigh
+            });
+        });
+    }
+}
+
 async function processMonthlyFinancials() {
     let totalMaintenanceCost = 0;
     
+    // 1. 融資返済と維持費の処理
     for (const user of Object.values(ServerGame.users)) {
         let monthlyMaintenance = 0;
         let monthlyRepayment = 0;
@@ -1155,13 +1198,9 @@ async function processMonthlyFinancials() {
             const baseCost = vehicle.category === 'air' ? AIRPLANE_BASE_COST : VEHICLE_BASE_COST;
             const formationFactor = vehicle.formationSize || 1;
             
-            // メンテナンスコストは距離ベース + 固定資産税
             monthlyMaintenance += vehicle.data.maintenanceCostPerKm * 1000 * formationFactor; 
             monthlyMaintenance += baseCost * vehicle.data.purchaseMultiplier * 0.001 * formationFactor;
         });
-        
-        const currentMonth = ServerGame.globalStats.gameTime.getMonth();
-        const currentYear = ServerGame.globalStats.gameTime.getFullYear();
         
         user.loans = user.loans.filter(loan => {
             if (loan.remaining <= 0) return false; 
@@ -1194,6 +1233,9 @@ async function processMonthlyFinancials() {
         user.moneyUpdated = true;
     }
     ServerGame.globalStats.lastMonthlyMaintenance = totalMaintenanceCost;
+    
+    // 2. 需要の発生
+    await processMonthlyDemandGeneration();
 }
 
 async function handleLoanRequest(userId, amount, termMonths) {
@@ -1209,7 +1251,6 @@ async function handleLoanRequest(userId, amount, termMonths) {
     
     const annualInterestRate = ANNUAL_INTEREST_RATE; // 10%
     
-    // 簡略化された線形計算を維持しつつ、10%金利を適用
     const totalRepayment = amount * (1 + annualInterestRate * (termMonths / 12));
     const monthlyTotalRepayment = totalRepayment / termMonths;
     
@@ -1249,15 +1290,6 @@ async function checkTerminalStatus() {
             needsUpdate = true;
         }
         
-        if (!terminal.isAirport) {
-            // 駅の需要は、車両容量の200倍を超えたら高いと見なす
-            const isDemandHigh = terminal.demand.passenger > terminal.capacity * 200 || terminal.demand.freight > terminal.capacity * 200;
-            if (terminal.isDemandHigh !== isDemandHigh) {
-                terminal.isDemandHigh = isDemandHigh;
-                needsUpdate = true;
-            }
-        }
-        
         if (needsUpdate) {
              io.emit('terminalUpdate', { 
                 id: terminal.id, 
@@ -1270,7 +1302,7 @@ async function checkTerminalStatus() {
 }
 
 async function triggerRandomEvent() {
-    // 確率を0.005から0.0005に大幅に引き下げ (10秒に1回チェックとして、平均で1000秒に1回=約16.7分に1回発生)
+    // 確率を0.0005に設定
     if (Math.random() < 0.0005) { 
         const allStations = ServerGame.globalStats.stations;
         if (allStations.length === 0) return;
@@ -1278,6 +1310,7 @@ async function triggerRandomEvent() {
         const targetStation = allStations[Math.floor(Math.random() * allStations.length)];
         const factor = 1 + Math.random() * 0.5; 
         
+        // 需要発生量自体を上げる
         targetStation.demand.passenger = Math.round(targetStation.demand.passenger * factor);
         targetStation.demand.freight = Math.round(targetStation.demand.freight * factor);
         
@@ -1315,7 +1348,6 @@ async function dismantleLine(userId, lineId) {
     
     vehiclesOnLine.forEach(v => {
         const baseCost = v.category === 'air' ? AIRPLANE_BASE_COST : VEHICLE_BASE_COST;
-        // 編成数を考慮して売却額を計算
         const purchaseCost = baseCost * v.data.purchaseMultiplier * (v.formationSize || 1); 
         const saleRevenue = Math.round(purchaseCost / 3);
         user.money += saleRevenue;
@@ -1343,7 +1375,6 @@ async function dismantleLine(userId, lineId) {
                 { $set: { lineConnections: globalTerminal.lineConnections } }
             ));
             
-            // 接続路線情報が変更されたことをクライアントに通知
             io.emit('terminalUpdate', { 
                 id: globalTerminal.id, 
                 isAirport: globalTerminal.isAirport, 
@@ -1431,6 +1462,8 @@ async function upgradeStation(userId, stationId, newType, cost) {
 let lastSimTime = performance.now();
 let lastSaveTime = performance.now(); 
 let lastEventTime = performance.now(); 
+let lastMonth = new Date(ServerGame.globalStats.gameTime).getMonth();
+
 async function serverSimulationLoop() { 
     const currentTime = performance.now();
     const deltaTimeMs = currentTime - lastSimTime;
@@ -1439,15 +1472,15 @@ async function serverSimulationLoop() {
     const gameDeltaSeconds = (deltaTimeMs / 1000) * ServerGame.globalStats.timeScale;
     
     const gameTime = ServerGame.globalStats.gameTime;
-    const prevMonth = gameTime.getMonth();
     gameTime.setTime(gameTime.getTime() + (deltaTimeMs * ServerGame.globalStats.timeScale));
     const nowMonth = gameTime.getMonth();
     
     let newsToSend = null;
     
-    if (nowMonth !== prevMonth) {
+    if (nowMonth !== lastMonth) {
         await processMonthlyFinancials(); 
         await saveGlobalStats(); 
+        lastMonth = nowMonth;
     }
     
     if (currentTime - lastEventTime > 5000) { 
@@ -1480,7 +1513,7 @@ async function serverSimulationLoop() {
                 status: v.status,
                 category: v.category,
                 rotation: rotationAngle,
-                formationSize: v.formationSize // ★ 編成数を追加
+                formationSize: v.formationSize 
             });
         });
 
@@ -1519,7 +1552,6 @@ async function serverSimulationLoop() {
         }
     });
     
-    // ランキングの計算と送信
     io.emit('rankingUpdate', await calculateRanking()); 
 }
 // =================================================================
@@ -1590,9 +1622,9 @@ io.on('connection', (socket) => {
             monthlyRepayment: userState.monthlyRepayment, 
             establishedLines: clientLines, 
             allLines: allClientLines, 
-            vehicles: userState.vehicles.map(v => ({ id: v.id, data: v.data, formationSize: v.formationSize })), // ★ formationSizeを送信
+            vehicles: userState.vehicles.map(v => ({ id: v.id, data: v.data, formationSize: v.formationSize })), 
             stations: ServerGame.globalStats.stations.map(s => ({ 
-                id: s.id, latlng: [s.lat, s.lng], ownerId: s.ownerId, type: s.type, capacity: s.capacity, name: s.name, demand: s.demand, lineConnections: s.lineConnections, isOverloaded: s.isOverloaded, isDemandHigh: s.isDemandHigh
+                id: s.id, latlng: [s.lat, s.lng], ownerId: s.ownerId, type: s.type, capacity: s.capacity, name: s.name, demand: s.demand, lineConnections: s.lineConnections, isOverloaded: s.isOverloaded, isDemandHigh: s.isDemandHigh, waitingPassenger: s.waitingPassenger, waitingFreight: s.waitingFreight
             })), 
             airports: ServerGame.globalStats.airports.map(a => ({
                 id: a.id, latlng: [a.lat, a.lng], ownerId: a.ownerId, type: a.type, capacity: a.capacity, name: a.name, lineConnections: a.lineConnections, isOverloaded: a.isOverloaded
@@ -1624,7 +1656,6 @@ io.on('connection', (socket) => {
         for (let i = 1; i < data.coords.length; i++) {
             const coord1 = data.coords[i-1];
             const coord2 = data.coords[i];
-            // 地形補正を計算に含める
             const { cost: segCost, lengthKm: segLength, terrainMultiplier: segTerrain } = calculateConstructionCost(coord1, coord2, data.trackType);
             totalCost += segCost;
             totalLengthKm += segLength;
@@ -1681,7 +1712,6 @@ io.on('connection', (socket) => {
                 }
             }
 
-            // 修正: アトミックにIDを取得
             const stationId = await getNextId('nextStationId');
             
             await sleep(500); 
@@ -1700,6 +1730,8 @@ io.on('connection', (socket) => {
                 lng: latlng[1],
                 name: newStation.name, 
                 demand: newStation.demand, 
+                waitingPassenger: newStation.waitingPassenger,
+                waitingFreight: newStation.waitingFreight,
                 lineConnections: newStation.lineConnections,
                 type: newStation.type, 
                 capacity: newStation.capacity 
@@ -1712,7 +1744,7 @@ io.on('connection', (socket) => {
             await saveUserFinancials(user.userId, user.money, user.totalConstructionCost, user.loans);
             
             io.emit('stationBuilt', { 
-                latlng: latlng, id: newStation.id, ownerId: userId, type: newStation.type, capacity: newStation.capacity, name: newStation.name, demand: newStation.demand, lineConnections: [] 
+                latlng: latlng, id: newStation.id, ownerId: userId, type: newStation.type, capacity: newStation.capacity, name: newStation.name, demand: newStation.demand, lineConnections: [], waitingPassenger: newStation.waitingPassenger, waitingFreight: newStation.waitingFreight
             });
             socket.emit('updateUserState', { 
                 money: user.money,
@@ -1753,7 +1785,6 @@ io.on('connection', (socket) => {
                 }
             }
 
-            // 修正: アトミックにIDを取得
             const airportId = await getNextId('nextStationId'); 
             
             await sleep(500); 
@@ -1843,7 +1874,6 @@ io.on('connection', (socket) => {
         
         const user = ServerGame.users[userId];
         
-        // 修正: アトミックにIDを取得
         const lineId = await getNextId('nextLineId');
         
         const lineColor = LINE_COLORS[lineId % LINE_COLORS.length];
@@ -1919,7 +1949,6 @@ io.on('connection', (socket) => {
                     { $set: { lineConnections: terminal.lineConnections } }
                 ));
                 
-                // 接続路線情報をリアルタイムで通知
                 io.emit('terminalUpdate', { 
                     id: terminal.id, 
                     isAirport: terminal.isAirport, 
@@ -2053,10 +2082,8 @@ io.on('connection', (socket) => {
  * 既存のコレクションから最大IDを取得し、GlobalStatsModelのカウンターを初期化する
  */
 async function initializeDatabase() {
-    // 1. GlobalStatsModelの存在確認
     let stats = await GlobalStatsModel.findById(1);
 
-    // 2. 最大IDの取得
     const maxStationId = (await StationModel.findOne().sort({ id: -1 }).select('id').lean())?.id || 0;
     const maxAirportId = (await AirportModel.findOne().sort({ id: -1 }).select('id').lean())?.id || 0;
     const maxLineId = (await LineModel.findOne().sort({ id: -1 }).select('id').lean())?.id || 0;
@@ -2070,7 +2097,6 @@ async function initializeDatabase() {
     console.log(`カウンター初期値: nextStationId=${nextStationId}, nextLineId=${nextLineId}, nextVehicleId=${nextVehicleId}`);
 
     if (!stats) {
-        // 存在しない場合は新規作成
         await GlobalStatsModel.create({
             _id: 1,
             gameTime: new Date(2025, 0, 1, 0, 0, 0),
@@ -2080,7 +2106,6 @@ async function initializeDatabase() {
             nextVehicleId: nextVehicleId
         });
     } else {
-        // 存在する場合はカウンターを更新 (既存の値より大きい場合のみ)
         const update = {};
         if (stats.nextStationId < nextStationId) update.nextStationId = nextStationId;
         if (stats.nextLineId < nextLineId) update.nextLineId = nextLineId;
@@ -2098,6 +2123,7 @@ async function loadGlobalStats() {
     if (statsRow) {
         ServerGame.globalStats.gameTime = new Date(statsRow.gameTime);
         ServerGame.globalStats.timeScale = statsRow.timeScale;
+        lastMonth = ServerGame.globalStats.gameTime.getMonth();
     }
 
     const stationsRes = await StationModel.find({}).lean();
@@ -2114,7 +2140,11 @@ async function loadGlobalStats() {
             row.type || 'Small', 
             stationName,
             row.demand,
-            row.lineConnections || []
+            row.lineConnections || [],
+            false,
+            false,
+            row.waitingPassenger || 0, // ★ロード時に初期化
+            row.waitingFreight || 0    // ★ロード時に初期化
         ); 
         station.demand = row.demand; 
         station.capacity = station.getCapacityByType(station.type); 
@@ -2135,8 +2165,6 @@ async function loadGlobalStats() {
         return airport;
     });
     
-    // 仮駅名更新ロジックは省略
-
     const allLinesRes = await LineModel.find({}).lean();
     ServerGame.globalStats.allLines = allLinesRes.map(row => {
         return {
@@ -2154,10 +2182,8 @@ async function startServer() {
     try {
         await connectDB();
         
-        // データベースの初期化とカウンターの調整を最初に行う
         await initializeDatabase();
         
-        // GeoTIFF関連のライブラリがNode.js環境で利用可能であることを確認してください
         if (typeof fromUrl !== 'undefined') {
             await loadPopulationTiff(); 
             if (!tiffImage) {
@@ -2169,7 +2195,6 @@ async function startServer() {
         
         await loadGlobalStats();
         
-        // Node.js v16以降ではグローバルにあることが多いが、念のためチェック
         if (typeof global.performance === 'undefined') {
             global.performance = performance;
         }
