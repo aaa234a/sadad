@@ -1,5 +1,3 @@
-
-
 // server.js
 const express = require('express');
 const http = require('http');
@@ -296,7 +294,7 @@ async function getPopulationDensityFromCoords(lat, lng) {
 }
 function calculateDemandFromPopulationDensity(populationDensity) {
     const catchmentAreaKm2 = 2;
-    const monthlyUseRate = 0.01;
+    const monthlyUseRate = 0.05; // ★修正: 0.01 から 0.05 に変更し、需要発生量を増加
     let localPopulation = populationDensity * catchmentAreaKm2;
     const passengerBase = Math.round(localPopulation * monthlyUseRate * (0.8 + Math.random() * 0.4)); 
     const freightBase = Math.round(passengerBase * 0.1 * (0.8 + Math.random() * 0.4));
@@ -1079,7 +1077,7 @@ async function loadUserData(userId) {
         if (line) {
             const data = VehicleData[row.dataKey];
             const formationSize = row.formationSize || 1; 
-            const vehicle = new ServerVehicle(row.id, line, data, formationSize, row.cargo); 
+            const vehicle = new ServerVehicle(id, line, data, formationSize, row.cargo); 
             
             vehicle.positionKm = row.positionKm;
             vehicle.status = row.status;
