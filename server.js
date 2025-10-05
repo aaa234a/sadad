@@ -150,6 +150,21 @@ const LINE_COLORS = ['#E4007F', '#009933', '#0000FF', '#FFCC00', '#FF6600', '#99
 const MAX_LOAN_RATE = 0.5; 
 const ANNUAL_INTEREST_RATE = 0.10; // ★ 10%に引き上げ
 
+const REVENUE_SETTINGS = {
+    passengerPerKm: 85,
+    freightPerKm: 35,
+    airCategoryMultiplier: 2.4,
+    globalMultiplier: 1.15,
+    longHaulThresholdKm: 120,
+    longHaulMaxBonus: 2.0,
+    loadBonusScale: 0.9,
+    loadBonusCap: 0.6,
+    demandBonusScale: 0.3,
+    demandBonusCap: 0.6,
+    airportPremiumMultiplier: 1.35,
+    formationBonusPerCar: 0.05,
+};
+
 const VehicleData = {
     COMMUTER: { name: "通勤形", maxSpeedKmH: 100, capacity: 500, maintenanceCostPerKm: 400, type: 'passenger', category: 'rail', color: '#008000', purchaseMultiplier: 1.0, maxFormation: 10 }, 
     EXPRESS: { name: "優等形", maxSpeedKmH: 160, capacity: 600, maintenanceCostPerKm: 700, type: 'passenger', category: 'rail', color: '#FF0000', purchaseMultiplier: 1.5, maxFormation: 12 }, 
@@ -745,19 +760,52 @@ class ServerVehicle {
         
         // 1. 貨物の荷降ろしと収益計算
         if (this.cargo.destinationTerminalId === terminal.id) {
-            const distance = this.routeLength; 
-            const baseRevenue = 5000; 
-            
-            // 航空機の場合、長距離移動なので収益係数を調整
-            const revenueMultiplier = this.category === 'air' ? 5 : 1; 
-            
-            if (this.data.type === 'passenger') {
-                revenue += this.cargo.passenger * distance * baseRevenue / 100 * revenueMultiplier;
-                this.cargo.passenger = 0;
-            } else if (this.data.type === 'freight') {
-                revenue += this.cargo.freight * distance * baseRevenue / 500 * revenueMultiplier;
-                this.cargo.freight = 0;
+            const distance = Math.max(1, this.routeLength);
+            const deliveredPassengers = this.cargo.passenger;
+            const deliveredFreight = this.cargo.freight;
+            const deliveredLoad = this.data.type === 'passenger' ? deliveredPassengers : deliveredFreight;
+
+            if (deliveredLoad > 0) {
+                const baseRate = this.data.type === 'passenger'
+                    ? REVENUE_SETTINGS.passengerPerKm
+                    : REVENUE_SETTINGS.freightPerKm;
+
+                let multiplier = REVENUE_SETTINGS.globalMultiplier * (this.data.revenueMultiplier ?? 1);
+                const capacity = Math.max(1, this.capacity);
+                const loadRatio = Math.min(1, deliveredLoad / capacity);
+
+                if (this.category === 'air') {
+                    multiplier *= REVENUE_SETTINGS.airCategoryMultiplier;
+                }
+
+                multiplier *= 1 + Math.min(REVENUE_SETTINGS.loadBonusCap, loadRatio * REVENUE_SETTINGS.loadBonusScale);
+
+                if (!terminal.isAirport && terminal.demand) {
+                    const demandValue = this.data.type === 'passenger'
+                        ? terminal.demand.passenger
+                        : terminal.demand.freight;
+                    const demandRatio = demandValue / capacity;
+                    multiplier *= 1 + Math.min(REVENUE_SETTINGS.demandBonusCap, demandRatio * REVENUE_SETTINGS.demandBonusScale);
+                } else if (terminal.isAirport) {
+                    multiplier *= REVENUE_SETTINGS.airportPremiumMultiplier;
+                }
+
+                if (distance > REVENUE_SETTINGS.longHaulThresholdKm) {
+                    const extraRatio = (distance - REVENUE_SETTINGS.longHaulThresholdKm) / REVENUE_SETTINGS.longHaulThresholdKm;
+                    const longHaulBonus = 1 + Math.min(
+                        REVENUE_SETTINGS.longHaulMaxBonus - 1,
+                        extraRatio
+                    );
+                    multiplier *= longHaulBonus;
+                }
+
+                multiplier *= 1 + (this.formationSize - 1) * REVENUE_SETTINGS.formationBonusPerCar;
+
+                revenue += Math.round(deliveredLoad * distance * baseRate * multiplier);
             }
+
+            this.cargo.passenger = 0;
+            this.cargo.freight = 0;
             this.cargo.destinationTerminalId = null;
         }
 
