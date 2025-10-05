@@ -32,6 +32,10 @@ function isAdminUser(userId) {
     return !!userId && ADMIN_USER_IDS.has(userId);
 }
 
+function isAdminOwnedTerminal(terminal) {
+    return terminal?.ownerId && isAdminUser(terminal.ownerId);
+}
+
 // =================================================================
 // 0. データベース接続とMongooseスキーマ定義
 // =================================================================
@@ -1000,6 +1004,18 @@ class ServerVehicle {
             const deliveredFreight = this.cargo.freight;
             const deliveredLoad = this.data.type === 'passenger' ? deliveredPassengers : deliveredFreight;
 
+            const destinationOwnerIsAdmin = terminal.isAirport ? isAdminUser(terminal.ownerId) : isAdminOwnedTerminal(terminal);
+            const shouldShareRevenue = destinationOwnerIsAdmin;
+            let ownerUser = ServerGame.users[this.ownerId];
+            let revenueRecipient = ownerUser;
+            if (shouldShareRevenue) {
+                const trainOwner = await ensureUserCached(this.ownerId);
+                if (trainOwner) {
+                    revenueRecipient = trainOwner;
+                    ownerUser = trainOwner;
+                }
+            }
+
             if (deliveredLoad > 0) {
                 const baseRate = this.data.type === 'passenger'
                     ? REVENUE_SETTINGS.passengerPerKm
@@ -1037,6 +1053,12 @@ class ServerVehicle {
                 multiplier *= 1 + (this.formationSize - 1) * REVENUE_SETTINGS.formationBonusPerCar;
 
                 revenue += Math.round(deliveredLoad * distance * baseRate * multiplier);
+            }
+
+            if (shouldShareRevenue && revenueRecipient && revenueRecipient !== ownerUser) {
+                revenueRecipient.money = (revenueRecipient.money || 0) + revenue;
+                revenueRecipient.moneyUpdated = true;
+                await saveUserFinancials(revenueRecipient.userId, revenueRecipient.money, revenueRecipient.totalConstructionCost, revenueRecipient.loans);
             }
 
             this.cargo.passenger = 0;
@@ -1266,8 +1288,11 @@ async function renameTerminal(userId, terminalId, newName, isAirport) {
     const terminalArray = isAirport ? ServerGame.globalStats.airports : ServerGame.globalStats.stations;
     const Model = isAirport ? AirportModel : StationModel;
     
-    const globalTerminal = terminalArray.find(t => t.id === terminalId && t.ownerId === userId);
-    if (!globalTerminal) return { success: false, message: "あなたのターミナルが見つかりません。" };
+    const globalTerminal = terminalArray.find(t => t.id === terminalId);
+    if (!globalTerminal) return { success: false, message: "ターミナルが見つかりません。" };
+    if (!isAdminUser(userId) && globalTerminal.ownerId !== userId) {
+        return { success: false, message: "対象のターミナルを所有していません。" };
+    }
     
     globalTerminal.name = newName;
     
@@ -1654,9 +1679,17 @@ async function dismantleTerminal(userId, terminalId, isAirport) {
     const cost = isAirport ? AIRPORT_COST : STATION_COST;
     const typeName = isAirport ? '空港' : '駅';
     
-    const globalTerminalIndex = terminalArray.findIndex(s => s.id === terminalId && s.ownerId === userId);
-    if (globalTerminalIndex === -1) return { success: false, message: `あなたの${typeName}が見つかりません。` };
+    const globalTerminalIndex = terminalArray.findIndex(s => s.id === terminalId);
+    if (globalTerminalIndex === -1) return { success: false, message: `${typeName}が見つかりません。` };
     const terminalToDismantle = terminalArray[globalTerminalIndex];
+
+    if (!isAdminUser(userId) && terminalToDismantle.ownerId !== userId) {
+        return { success: false, message: `${typeName}を解体する権限がありません。` };
+    }
+    
+    if (terminalToDismantle.ownerId === 'ADMIN_SHARED') {
+        return { success: false, message: `共有${typeName}は解体できません。` };
+    }
     
     if (terminalToDismantle.lineConnections.length > 0) {
         return { success: false, message: `この${typeName}には路線が接続されています。先に路線をすべて解体してください。` };
@@ -1686,8 +1719,14 @@ async function upgradeStation(userId, stationId, newType, cost) {
     
     if (user.money < cost) return { success: false, message: "資金不足で駅をアップグレードできません。" };
 
-    const globalStation = ServerGame.globalStats.stations.find(s => s.id === stationId && s.ownerId === userId);
-    if (!globalStation) return { success: false, message: "あなたの駅が見つかりません。" };
+    const globalStation = ServerGame.globalStats.stations.find(s => s.id === stationId);
+    if (!globalStation) return { success: false, message: "駅が見つかりません。" };
+    if (globalStation.ownerId === 'ADMIN_SHARED' && !isAdminUser(userId)) {
+        return { success: false, message: "共有駅はアップグレードできません。" };
+    }
+    if (!isAdminUser(userId) && globalStation.ownerId !== userId) {
+        return { success: false, message: "対象の駅を所有していません。" };
+    }
     
     const newCapacity = globalStation.getCapacityByType(newType);
     
@@ -1940,8 +1979,9 @@ io.on('connection', (socket) => {
         if (!userId) return;
         const user = ServerGame.users[userId];
         const latlng = data.latlng; 
+        const isAdminBuilder = isAdminUser(userId);
         
-        if (user.money < STATION_COST) {
+        if (!isAdminBuilder && user.money < STATION_COST) {
             socket.emit('error', '資金不足で駅を建設できません。');
             return;
         }
@@ -1954,6 +1994,7 @@ io.on('connection', (socket) => {
 
             for (const existingTerminal of allTerminals) {
                 if (existingTerminal.ownerId === userId) continue;
+                if (isAdminBuilder && isAdminOwnedTerminal(existingTerminal)) continue;
                 
                 const existingPoint = turf.point([existingTerminal.lng, existingTerminal.lat]);
                 const distanceKm = turf.distance(newStationPoint, existingPoint, { units: 'kilometers' });
@@ -1974,11 +2015,12 @@ io.on('connection', (socket) => {
             const populationDensity = await getPopulationDensityFromCoords(latlng[0], latlng[1]);
             const calculatedDemand = calculateDemandFromPopulationDensity(populationDensity);
             
-            const newStation = new ServerStation(stationId, latlng, userId, 'Small', newStationName, calculatedDemand, []); 
+            const ownerId = isAdminBuilder ? 'ADMIN_SHARED' : userId;
+            const newStation = new ServerStation(stationId, latlng, ownerId, 'Small', newStationName, calculatedDemand, []); 
             
             await StationModel.create({
                 id: newStation.id,
-                ownerId: newStation.ownerId,
+                ownerId: isAdminBuilder ? 'ADMIN_SHARED' : newStation.ownerId,
                 lat: latlng[0],
                 lng: latlng[1],
                 name: newStation.name, 
@@ -1988,16 +2030,21 @@ io.on('connection', (socket) => {
                 capacity: newStation.capacity 
             });
 
-            user.money -= STATION_COST;
-            user.totalConstructionCost += STATION_COST;
+            if (!isAdminBuilder) {
+                user.money -= STATION_COST;
+                user.totalConstructionCost += STATION_COST;
+            }
             ServerGame.globalStats.stations.push(newStation);
             
-            await saveUserFinancials(user.userId, user.money, user.totalConstructionCost, user.loans);
+            if (!isAdminBuilder) {
+                await saveUserFinancials(user.userId, user.money, user.totalConstructionCost, user.loans);
+            }
             
             io.emit('stationBuilt', { 
-                latlng: latlng, id: newStation.id, ownerId: userId, type: newStation.type, capacity: newStation.capacity, name: newStation.name, demand: newStation.demand, lineConnections: [] 
+                latlng: latlng, id: newStation.id, ownerId: newStation.ownerId, type: newStation.type, capacity: newStation.capacity, name: newStation.name, demand: newStation.demand, lineConnections: [] 
             });
-            socket.emit('updateUserState', { 
+            if (!isAdminBuilder) {
+                socket.emit('updateUserState', { 
                 money: user.money,
                 totalConstructionCost: user.totalConstructionCost,
                 currentLoan: user.currentLoan,
