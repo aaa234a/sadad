@@ -190,6 +190,70 @@ async function ensureUserCached(userId) {
     return ServerGame.users[userId] || null;
 }
 
+async function buildAdminStation({ latlng, name, user }) {
+    const lat = latlng[0];
+    const lng = latlng[1];
+    const newStationPoint = turf.point([lng, lat]);
+    const exclusionRadiusKm = 0.5;
+    const allTerminals = [...ServerGame.globalStats.stations, ...ServerGame.globalStats.airports];
+
+    for (const existingTerminal of allTerminals) {
+        if (existingTerminal.ownerId === user.userId) continue;
+        if (isAdminOwnedTerminal(existingTerminal)) continue;
+
+        const existingPoint = turf.point([existingTerminal.lng, existingTerminal.lat]);
+        const distanceKm = turf.distance(newStationPoint, existingPoint, { units: 'kilometers' });
+
+        if (distanceKm < exclusionRadiusKm) {
+            throw new Error(`他のプレイヤー (${existingTerminal.ownerId}) の施設が ${Math.round(distanceKm * 1000)}m 以内にあります。建設できません。`);
+        }
+    }
+
+    const stationId = await getNextId('nextStationId');
+    await sleep(500);
+
+    const stationName = name || await generateRegionalStationName(lat, lng, false);
+    const populationDensity = await getPopulationDensityFromCoords(lat, lng);
+    const calculatedDemand = calculateDemandFromPopulationDensity(populationDensity);
+
+    const newStation = new ServerStation(
+        stationId,
+        latlng,
+        'ADMIN_SHARED',
+        'Small',
+        stationName,
+        calculatedDemand,
+        []
+    );
+
+    await StationModel.create({
+        id: newStation.id,
+        ownerId: 'ADMIN_SHARED',
+        lat: lat,
+        lng: lng,
+        name: newStation.name,
+        demand: newStation.demand,
+        lineConnections: newStation.lineConnections,
+        type: newStation.type,
+        capacity: newStation.capacity,
+    });
+
+    ServerGame.globalStats.stations.push(newStation);
+
+    io.emit('stationBuilt', {
+        latlng,
+        id: newStation.id,
+        ownerId: newStation.ownerId,
+        type: newStation.type,
+        capacity: newStation.capacity,
+        name: newStation.name,
+        demand: newStation.demand,
+        lineConnections: [],
+    });
+
+    return { message: `${newStation.name} を共有駅として建設しました。` };
+}
+
 async function broadcastSystemMessage(message) {
     const trimmed = message.substring(0, 200);
     const timestamp = new Date();
@@ -371,8 +435,35 @@ async function handleServerCommand({ command, args, rawArgs, socket, userId }) {
             await broadcastSystemMessage(`ゲーム内時間が ${newTime.toISOString()} に更新されました。`);
             return;
         }
+        case 'buildstation': {
+            if (args.length < 2) {
+                emitUsage(socket, '/buildstation <lat> <lng> [name]');
+                return;
+            }
+            const lat = parseNumberInput(args[0]);
+            const lng = parseNumberInput(args[1]);
+            if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+                socket.emit('error', '緯度経度の形式が正しくありません。');
+                return;
+            }
+            const name = args[2] ? rawArgs.split(/\s+/).slice(2).join(' ').substring(0, 50) : null;
+            const latlng = [lat, lng];
+            const user = await ensureUserCached(userId);
+            if (!user) {
+                socket.emit('error', 'ユーザーデータが読み込めません。');
+                return;
+            }
+            try {
+                const result = await buildAdminStation({ latlng, name, user });
+                socket.emit('info', result.message);
+            } catch (error) {
+                console.error('buildstation command failed:', error);
+                socket.emit('error', error.message || '共有駅の建設に失敗しました。');
+            }
+            return;
+        }
         case 'help':
-            socket.emit('info', '利用可能なコマンド: /money, /stationname, /timescale, /demand, /announce, /givevehicle, /settime');
+            socket.emit('info', '利用可能なコマンド: /money, /stationname, /timescale, /demand, /announce, /givevehicle, /settime, /buildstation');
             return;
         default:
             socket.emit('error', `不明なコマンドです: ${command}`);
