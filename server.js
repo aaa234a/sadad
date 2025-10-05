@@ -1929,6 +1929,10 @@ app.post('/login', express.json(), async (req, res) => {
     if (!username || username.length < 3 || !password) {
         return res.status(400).send({ message: "ユーザー名とパスワードを入力してください。" });
     }
+
+    if (username === 'ADMIN_SHARED') {
+        return res.status(403).send({ message: "このアカウントではログインできません。" });
+    }
     
     try {
         const userRow = await UserModel.findOne({ userId: username }).lean();
@@ -1936,6 +1940,9 @@ app.post('/login', express.json(), async (req, res) => {
         if (userRow) {
             if (userRow.password !== password) {
                 return res.status(401).send({ message: "パスワードが違います。" });
+            }
+            if (userRow.userId === 'ADMIN_SHARED') {
+                return res.status(403).send({ message: "このアカウントではログインできません。" });
             }
         } else {
             await UserModel.create({
@@ -2298,6 +2305,18 @@ io.on('connection', (socket) => {
             const lineTerminals = data.terminalCoords.map(coord => 
                 allTerminals.find(t => t.latlng[0] === coord[0] && t.latlng[1] === coord[1])
             ).filter(t => t);
+
+            const isValidConstruction = lineTerminals.every(t => {
+                if (!t) return false;
+                if (t.ownerId === userId) return true;
+                if (t.ownerId === 'ADMIN_SHARED') return true;
+                return false;
+            });
+            
+            if (!isValidConstruction) {
+                socket.emit('error', '他プレイヤーの駅は路線のノードとして使用できません。');
+                return;
+            }
             
             const newLineManager = new ServerLineManager(
                 lineId, userId, lineTerminals, fullCoords, totalCost, totalLengthKm, lineColor, trackType
