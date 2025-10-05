@@ -657,7 +657,9 @@
                 s.demand,
                 s.lineConnections,
                 s.isOverloaded, 
-                s.isDemandHigh 
+                s.isDemandHigh,
+                s.waitingPassenger, // ★追加
+                s.waitingFreight    // ★追加
               )
           );
           
@@ -755,7 +757,7 @@
 
       // 鉄道駅クラス
       class Station {
-        constructor(id, latlng, map, ownerId, type = 'Small', capacity = 3, name, demand, lineConnections = [], isOverloaded = false, isDemandHigh = false) {
+        constructor(id, latlng, map, ownerId, type = 'Small', capacity = 3, name, demand, lineConnections = [], isOverloaded = false, isDemandHigh = false, waitingPassenger = 0, waitingFreight = 0) {
           this.id = id;
           this.latlng = latlng;
           this.ownerId = ownerId;
@@ -767,6 +769,8 @@
           this.isAirport = false;
           this.isOverloaded = isOverloaded; 
           this.isDemandHigh = isDemandHigh; 
+          this.waitingPassenger = waitingPassenger; // ★追加
+          this.waitingFreight = waitingFreight;     // ★追加
           this.markers = []; 
 
           this.drawMarkers(map);
@@ -798,6 +802,7 @@
                 
                 marker.on("click", (e) => {
                     handleTerminalClick(this);
+                    // ポップアップが閉じないようにイベント伝播を停止
                     L.DomEvent.stopPropagation(e);
                     if (e.originalEvent) {
                         e.originalEvent.stopPropagation();
@@ -825,10 +830,15 @@
             }
             
             if (this.demand) {
-                popupContent += `<hr><b>📊 需要</b><br>`;
+                popupContent += `<hr><b>📊 需要 (月次発生)</b><br>`;
                 popupContent += `旅客: ${this.demand.passenger.toLocaleString()}人/月<br>`;
                 popupContent += `貨物: ${this.demand.freight.toLocaleString()}t/月`;
             }
+            
+            // ★待機人数/貨物量の表示
+            popupContent += `<hr><b>🚶 待機中 (未消化需要)</b><br>`;
+            popupContent += `乗客: ${Math.round(this.waitingPassenger).toLocaleString()}人<br>`;
+            popupContent += `貨物: ${Math.round(this.waitingFreight).toLocaleString()}t`;
             
             if (this.ownerId === Game.userId) {
                 const isMedium = this.type === 'Medium';
@@ -851,7 +861,7 @@
         }
       }
       
-      // 空港クラス ★追加
+      // 空港クラス ★変更なし
       class Airport {
         constructor(id, latlng, map, ownerId, type = 'Small', capacity = 5, name, lineConnections = [], isOverloaded = false) {
           this.id = id;
@@ -1036,13 +1046,15 @@
                 if (data.isDemandHigh !== undefined) terminal.isDemandHigh = data.isDemandHigh;
                 if (data.lineConnections !== undefined) terminal.lineConnections = data.lineConnections;
                 if (data.demand !== undefined) terminal.demand = data.demand;
+                if (data.waitingPassenger !== undefined) terminal.waitingPassenger = data.waitingPassenger; // ★更新
+                if (data.waitingFreight !== undefined) terminal.waitingFreight = data.waitingFreight;       // ★更新
                 
                 terminal.updatePopup();
             }
         });
 
         socket.on("stationBuilt", (data) => {
-          new Station(data.id, { lat: data.latlng[0], lng: data.latlng[1] }, map, data.ownerId, data.type, data.capacity, data.name, data.demand, data.lineConnections || []); 
+          new Station(data.id, { lat: data.latlng[0], lng: data.latlng[1] }, map, data.ownerId, data.type, data.capacity, data.name, data.demand, data.lineConnections || [], false, false, data.waitingPassenger, data.waitingFreight); 
           Game.updateGlobalStats({ globalStats: { stationsCount: Game.stations.length, airportsCount: Game.airports.length } });
         });
         
@@ -1274,6 +1286,16 @@
 
       // 駅/空港のクリックハンドラを統合
       function handleTerminalClick(terminal) {
+        // ポップアップが開いている場合は、クリックイベントがマップに伝播してポップアップが閉じないようにする
+        if (terminal.markers && terminal.markers[1]) {
+            const marker = terminal.markers[1];
+            if (marker.getPopup() && marker.getPopup().isOpen()) {
+                // ポップアップが既に開いている場合は何もしない
+                // ただし、この関数はマーカークリック時に呼ばれるため、
+                // 建設モードの処理に進む前に、クリックイベントの伝播を停止する。
+            }
+        }
+        
         if (Game.mode === "track") {
             if (terminal.isAirport) {
                 alert("鉄道路線は空港をノードにできません。");
@@ -1285,6 +1307,9 @@
         } else if (Game.mode === "dismantle-station") {
             handleTerminalDismantle(terminal);
         }
+        
+        // ポップアップが閉じないように、この関数内でイベント伝播を停止する処理は、
+        // Leafletのマーカークリックイベントハンドラ内で実行済み (drawMarkers内)
       }
       
       function handleTrackNodeClick(station) {
