@@ -147,10 +147,9 @@
 
       /* 列車アイコンの調整: 丸から長方形に変更 */
       .train-icon {
-        /* サイズはJSで動的に設定されるが、基本形を定義 */
-        width: 18px; 
-        height: 8px; 
-        border-radius: 2px; 
+        width: 18px; /* 列車らしい長さに */
+        height: 8px; /* 列車らしい細さに */
+        border-radius: 2px; /* 角を少し丸める */
         border: 2px solid #fff;
         box-shadow: 0 0 5px rgba(0, 0, 0, 0.8);
         transform: translate(-50%, -50%); /* 中央に配置 */
@@ -374,7 +373,7 @@
           
           <!-- 融資パネル -->
           <hr style="margin: 10px 0; border: none; border-top: 2px solid #888;" />
-          <h3>🏦 銀行融資 (年利 10%)</h3>
+          <h3>🏦 銀行融資</h3>
           <div id="loan-panel">
             <p>現在の借入: <span id="current-loan-display">¥0</span></p>
             <p>借入可能額: <span id="max-loan-display">¥0</span></p>
@@ -525,8 +524,8 @@
         userId: null,
         money: 0,
         totalConstructionCost: 0,
-        currentLoan: 0, 
-        monthlyRepayment: 0, 
+        currentLoan: 0, // ★追加
+        monthlyRepayment: 0, // ★追加
         establishedLines: [],
         allLines: {}, 
         stations: [],
@@ -566,7 +565,7 @@
                 this.money +
                 this.totalConstructionCost * 0.7 +
                 this.vehicles.length * VEHICLE_BASE_COST -
-                this.currentLoan; 
+                this.currentLoan; // ★負債を引く
                 
             document.getElementById("money-display").textContent = `¥${Math.round(
                 this.money
@@ -657,9 +656,7 @@
                 s.demand,
                 s.lineConnections,
                 s.isOverloaded, 
-                s.isDemandHigh,
-                s.waitingPassenger, // ★追加
-                s.waitingFreight    // ★追加
+                s.isDemandHigh 
               )
           );
           
@@ -757,7 +754,7 @@
 
       // 鉄道駅クラス
       class Station {
-        constructor(id, latlng, map, ownerId, type = 'Small', capacity = 3, name, demand, lineConnections = [], isOverloaded = false, isDemandHigh = false, waitingPassenger = 0, waitingFreight = 0) {
+        constructor(id, latlng, map, ownerId, type = 'Small', capacity = 3, name, demand, lineConnections = [], isOverloaded = false, isDemandHigh = false) {
           this.id = id;
           this.latlng = latlng;
           this.ownerId = ownerId;
@@ -769,8 +766,6 @@
           this.isAirport = false;
           this.isOverloaded = isOverloaded; 
           this.isDemandHigh = isDemandHigh; 
-          this.waitingPassenger = waitingPassenger; // ★追加
-          this.waitingFreight = waitingFreight;     // ★追加
           this.markers = []; 
 
           this.drawMarkers(map);
@@ -798,15 +793,10 @@
                     title: this.name, 
                 }).addTo(map);
 
-                // ★修正: ポップアップが閉じないように設定
-                marker.bindPopup(popupContent, {
-                    closeOnClick: false,
-                    autoClose: false
-                });
+                marker.bindPopup(popupContent);
                 
                 marker.on("click", (e) => {
                     handleTerminalClick(this);
-                    // ポップアップが閉じないようにイベント伝播を停止
                     L.DomEvent.stopPropagation(e);
                     if (e.originalEvent) {
                         e.originalEvent.stopPropagation();
@@ -834,15 +824,10 @@
             }
             
             if (this.demand) {
-                popupContent += `<hr><b>📊 需要 (月次発生)</b><br>`;
+                popupContent += `<hr><b>📊 需要</b><br>`;
                 popupContent += `旅客: ${this.demand.passenger.toLocaleString()}人/月<br>`;
                 popupContent += `貨物: ${this.demand.freight.toLocaleString()}t/月`;
             }
-            
-            // ★待機人数/貨物量の表示
-            popupContent += `<hr><b>🚶 待機中 (未消化需要)</b><br>`;
-            popupContent += `乗客: ${Math.round(this.waitingPassenger).toLocaleString()}人<br>`;
-            popupContent += `貨物: ${Math.round(this.waitingFreight).toLocaleString()}t`;
             
             if (this.ownerId === Game.userId) {
                 const isMedium = this.type === 'Medium';
@@ -865,7 +850,7 @@
         }
       }
       
-      // 空港クラス ★変更なし
+      // 空港クラス ★追加
       class Airport {
         constructor(id, latlng, map, ownerId, type = 'Small', capacity = 5, name, lineConnections = [], isOverloaded = false) {
           this.id = id;
@@ -905,11 +890,7 @@
                     title: this.name, 
                 }).addTo(map);
 
-                // ★修正: ポップアップが閉じないように設定
-                marker.bindPopup(popupContent, {
-                    closeOnClick: false,
-                    autoClose: false
-                });
+                marker.bindPopup(popupContent);
                 
                 marker.on("click", (e) => {
                     handleTerminalClick(this);
@@ -1054,15 +1035,13 @@
                 if (data.isDemandHigh !== undefined) terminal.isDemandHigh = data.isDemandHigh;
                 if (data.lineConnections !== undefined) terminal.lineConnections = data.lineConnections;
                 if (data.demand !== undefined) terminal.demand = data.demand;
-                if (data.waitingPassenger !== undefined) terminal.waitingPassenger = data.waitingPassenger; // ★更新
-                if (data.waitingFreight !== undefined) terminal.waitingFreight = data.waitingFreight;       // ★更新
                 
                 terminal.updatePopup();
             }
         });
 
         socket.on("stationBuilt", (data) => {
-          new Station(data.id, { lat: data.latlng[0], lng: data.latlng[1] }, map, data.ownerId, data.type, data.capacity, data.name, data.demand, data.lineConnections || [], false, false, data.waitingPassenger, data.waitingFreight); 
+          new Station(data.id, { lat: data.latlng[0], lng: data.latlng[1] }, map, data.ownerId, data.type, data.capacity, data.name, data.demand, data.lineConnections || []); 
           Game.updateGlobalStats({ globalStats: { stationsCount: Game.stations.length, airportsCount: Game.airports.length } });
         });
         
@@ -1172,14 +1151,6 @@
           const iconClass = isAir ? "airplane-icon" : "train-icon";
           
           const rotationAngle = vehicle.rotation !== undefined ? vehicle.rotation : 0;
-          const formationSize = vehicle.formationSize || 1; 
-
-          // サイズを編成数に応じて調整 (例: 1編成あたり8pxの長さを追加)
-          const trainWidth = 18 + (formationSize - 1) * 8; 
-          
-          const trainStyle = isAir 
-            ? `width: 24px; height: 24px;`
-            : `width: ${trainWidth}px; height: 8px; border-radius: 2px;`;
           
           // 列車アイコンは回転させない（長方形の視認性維持のため）
           const rotationStyle = isAir 
@@ -1190,9 +1161,9 @@
             className: iconClass,
             style: `background-color: ${vehicle.color}; border-color: ${
               vehicle.owner === Game.userId ? "yellow" : "white"
-            }; ${rotationStyle} ${trainStyle}`,
+            }; ${rotationStyle}`,
           });
-          const popupContent = `${isAir ? '✈️' : '🚆'} 車両 #${vehicle.id} (Owner: ${vehicle.owner}) - 編成: ${formationSize} - Status: ${vehicle.status || 'Running'}`;
+          const popupContent = `${isAir ? '✈️' : '🚆'} 車両 #${vehicle.id} (Owner: ${vehicle.owner}) - Status: ${vehicle.status || 'Running'}`;
 
           longitudeOffsets.forEach((offset, index) => {
             const offsetLatLng = L.latLng(latlng.lat, latlng.lng + offset);
@@ -1223,7 +1194,7 @@
                     className: iconClass,
                     style: `background-color: ${vehicle.color}; border-color: ${
                         vehicle.owner === Game.userId ? "yellow" : "white"
-                    }; ${rotationStyle} ${trainStyle}`, 
+                    }; ${rotationStyle}`, 
                 });
                 currentMarkerData.setIcon(newIcon);
             }
@@ -1294,16 +1265,6 @@
 
       // 駅/空港のクリックハンドラを統合
       function handleTerminalClick(terminal) {
-        // ポップアップが開いている場合は、クリックイベントがマップに伝播してポップアップが閉じないようにする
-        if (terminal.markers && terminal.markers[1]) {
-            const marker = terminal.markers[1];
-            if (marker.getPopup() && marker.getPopup().isOpen()) {
-                // ポップアップが既に開いている場合は何もしない
-                // ただし、この関数はマーカークリック時に呼ばれるため、
-                // 建設モードの処理に進む前に、クリックイベントの伝播を停止する。
-            }
-        }
-        
         if (Game.mode === "track") {
             if (terminal.isAirport) {
                 alert("鉄道路線は空港をノードにできません。");
@@ -1315,9 +1276,6 @@
         } else if (Game.mode === "dismantle-station") {
             handleTerminalDismantle(terminal);
         }
-        
-        // ポップアップが閉じないように、この関数内でイベント伝播を停止する処理は、
-        // Leafletのマーカークリックイベントハンドラ内で実行済み (drawMarkers内)
       }
       
       function handleTrackNodeClick(station) {
@@ -1515,7 +1473,7 @@
           const amount = amountM * 1000000;
           
           if (amount > Game.money * 5) { // 簡易的なチェック
-              // return alert("借入額が大きすぎます。総資産の5倍までが目安です。");
+              return alert("借入額が大きすぎます。総資産の5倍までが目安です。");
           }
           
           socket.emit('requestLoan', { amount: amount, termMonths: termMonths });
@@ -1670,10 +1628,7 @@
           const data = VehicleData[key];
           const isAir = data.category === 'air';
           const baseCost = isAir ? AIRPLANE_BASE_COST : VEHICLE_BASE_COST;
-          const maxFormation = data.maxFormation || 1; 
-          
-          // コスト計算はサーバーに任せるため、ここでは単編成コストを表示
-          const purchaseCost = baseCost * data.purchaseMultiplier; 
+          const purchaseCost = baseCost * data.purchaseMultiplier;
           const icon = isAir ? '✈️' : '🚆';
 
           const availableLines = Game.establishedLines.filter((line) => {
@@ -1704,17 +1659,15 @@
           const disabled = availableLines.length === 0 ? "disabled" : "";
 
           container.innerHTML += `
-                    <div style="margin-bottom: 10px; padding: 5px; border: 1px solid #ccc;">
-                        <div style="display: flex; justify-content: space-between; align-items: center;">
-                            <span style="width: 100px; color: ${data.color};">${icon} ${data.name}</span>
-                            <small style="flex-grow: 1; margin-left: 10px;">${data.maxSpeedKmH}km/h, 単編成: ¥${purchaseCost.toLocaleString()}</small>
-                        </div>
-                        <div style="display: flex; align-items: center; margin-top: 5px;">
-                            <label for="formation-size-${key}" style="width: 30%; font-size: 0.9em;">編成数 (Max ${maxFormation}):</label>
-                            <input type="number" id="formation-size-${key}" value="1" min="1" max="${maxFormation}" style="width: 20%; margin-right: 5px; padding: 5px; box-sizing: border-box;">
-                            ${lineSelect}
-                            <button onclick="buyVehicle('${key}')" style="width: 45%;" ${disabled}>購入</button>
-                        </div>
+                    <div style="display: flex; align-items: center; margin-bottom: 5px;">
+                        <span style="width: 100px; color: ${data.color};">${icon} ${
+            data.name
+          }</span>
+                        <small style="flex-grow: 1; margin-left: 10px;">${
+                          data.maxSpeedKmH
+                        }km/h, ¥${purchaseCost.toLocaleString()}</small>
+                        ${lineSelect}
+                        <button onclick="buyVehicle('${key}')" style="width: 45%;" ${disabled}>購入</button>
                     </div>
                 `;
         });
@@ -1723,23 +1676,13 @@
       window.buyVehicle = (vehicleKey) => {
         if (!socket) return alert("サーバーに接続されていません。");
         const lineSelect = document.getElementById(`line-select-${vehicleKey}`);
-        const formationInput = document.getElementById(`formation-size-${vehicleKey}`);
-        
         if (!lineSelect || lineSelect.value === "") {
           alert("割り当てる路線を選択してください。");
           return;
         }
-        
         const lineId = lineSelect.value;
-        const formationSize = parseInt(formationInput.value);
-        const maxFormation = VehicleData[vehicleKey].maxFormation;
-        
-        if (isNaN(formationSize) || formationSize < 1 || formationSize > maxFormation) {
-            alert(`編成数は1から${maxFormation}の間で指定してください。`);
-            return;
-        }
 
-        socket.emit("buyVehicle", { lineId: lineId, vehicleKey: vehicleKey, formationSize: formationSize });
+        socket.emit("buyVehicle", { lineId: lineId, vehicleKey: vehicleKey });
       };
 
       window.toggleAccordion = (contentId) => {
