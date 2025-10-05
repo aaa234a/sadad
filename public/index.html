@@ -798,7 +798,11 @@
                     title: this.name, 
                 }).addTo(map);
 
-                marker.bindPopup(popupContent);
+                // ★修正: ポップアップが閉じないように設定
+                marker.bindPopup(popupContent, {
+                    closeOnClick: false,
+                    autoClose: false
+                });
                 
                 marker.on("click", (e) => {
                     handleTerminalClick(this);
@@ -901,7 +905,11 @@
                     title: this.name, 
                 }).addTo(map);
 
-                marker.bindPopup(popupContent);
+                // ★修正: ポップアップが閉じないように設定
+                marker.bindPopup(popupContent, {
+                    closeOnClick: false,
+                    autoClose: false
+                });
                 
                 marker.on("click", (e) => {
                     handleTerminalClick(this);
