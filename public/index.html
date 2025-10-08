@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="ja">
   <head>
@@ -59,8 +60,8 @@
         top: 10px;
         left: 10px;
         width: 300px;
-        max-height: 85vh; /* 画面の高さに合わせて最大高さを設定 */
-        overflow-y: auto; /* 縦方向のスクロールを有効にする */
+        max-height: 85vh; 
+        overflow-y: auto; 
       }
 
       /* ニュースフィードパネル (左下) */
@@ -147,12 +148,12 @@
 
       /* 列車アイコンの調整: 丸から長方形に変更 */
       .train-icon {
-        width: 18px; /* 列車らしい長さに */
-        height: 8px; /* 列車らしい細さに */
-        border-radius: 2px; /* 角を少し丸める */
+        width: 18px; 
+        height: 8px; 
+        border-radius: 2px; 
         border: 2px solid #fff;
         box-shadow: 0 0 5px rgba(0, 0, 0, 0.8);
-        transform: translate(-50%, -50%); /* 中央に配置 */
+        transform: translate(-50%, -50%); 
       }
       .station-icon {
         background-color: #000;
@@ -164,12 +165,12 @@
         cursor: pointer;
       }
       
-      /* ★動的な駅アイコンカラー */
+      /* 動的な駅アイコンカラー */
       .station-icon.normal { background-color: #0044BB; }
       .station-icon.overload { background-color: #FF0000; }
       .station-icon.demand { background-color: #FFCC00; }
 
-      /* ★追加: 空港アイコン */
+      /* 空港アイコン */
       .airport-icon {
         background-color: #007bff;
         width: 20px;
@@ -185,19 +186,18 @@
         font-weight: bold;
       }
       
-      /* ★動的な空港アイコンカラー */
+      /* 動的な空港アイコンカラー */
       .airport-icon.normal { background-color: #007bff; }
       .airport-icon.overload { background-color: #FF0000; }
 
-      /* ★改良: 飛行機アイコン (回転対応) - 形状を維持しつつ色を調整 */
+      /* 飛行機アイコン (回転対応) */
       .airplane-icon {
         width: 24px; 
         height: 24px;
-        background-color: #5bc0de; /* 飛行機らしい水色系 */
+        background-color: #5bc0de; 
         border-radius: 2px; 
         border: 2px solid #fff;
         box-shadow: 0 0 5px rgba(0, 0, 0, 0.8);
-        /* 矢印のような形状をクリップパスで定義 */
         clip-path: polygon(
             50% 0%, 
             60% 25%, 
@@ -246,7 +246,6 @@
       
       /* ========================================================= */
       /* UI重なり防止のためのメディアクエリ */
-      /* 画面幅が狭い場合 (モバイルなど) は縦に積み重ねる */
       /* ========================================================= */
       @media (max-width: 650px) {
         .rail-ui-control,
@@ -257,40 +256,72 @@
             width: 95%;
             left: 2.5%;
             right: auto;
+            position: relative; 
+            margin-bottom: 10px;
         }
 
-        /* 建設コントロール (左上) */
+        body {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding-bottom: 260px; 
+        }
+        
+        #map {
+            position: fixed;
+            top: 0;
+            left: 0;
+            height: 100%;
+            width: 100%;
+            z-index: 0;
+        }
+
+        /* 建設コントロール (左上 -> 上部全体) */
         .rail-ui-control {
             top: 10px;
-            max-height: 35vh; 
+            max-height: 40vh; 
+            z-index: 1001;
         }
 
-        /* ニュースフィード (建設の下) */
-        #news-feed-panel {
-            top: auto;
-            bottom: 500px; /* チャット(240) + ランキング(240) + 20 */
-            max-height: 150px;
-        }
-
-        /* 統計情報 (ニュースフィードの下) */
+        /* 統計情報 (右上 -> 建設の下) */
         #game-stats {
             top: auto;
-            bottom: 350px; 
-            max-height: 140px;
-            overflow-y: auto;
+            right: auto;
+            z-index: 1001;
+        }
+
+        /* ニュースフィード (左下 -> 統計の下) */
+        #news-feed-panel {
+            top: auto;
+            left: 2.5%;
+            right: auto;
+            z-index: 1001;
+        }
+        
+        /* ランキングとチャットは画面下部に固定 */
+        #ranking-panel,
+        #chat-panel {
+            position: fixed;
+            width: 95%;
+            left: 2.5%;
+            right: auto;
+            z-index: 1002;
         }
 
         /* ランキング (チャットの上) */
         #ranking-panel {
-            bottom: 250px;
-            max-height: 90px;
-            overflow-y: auto;
+            bottom: 130px;
+            max-height: 120px;
         }
 
         /* チャット (最下部) */
         #chat-panel {
             bottom: 10px;
-            max-height: 240px;
+            max-height: 120px;
+        }
+        
+        #chat-messages {
+            height: 50px !important;
         }
       }
     </style>
@@ -487,7 +518,7 @@
         onclick="toggleAccordion('ranking-content')"
       >
         <span
-          >🏆 ランキング (対戦要素)
+          >🏆 ランキング (総資産ベース)
           <span id="ranking-toggle-icon">▼</span></span
         >
       </div>
@@ -513,19 +544,19 @@
       const INITIAL_LAT = 35.681236;
       const INITIAL_LNG = 139.767125;
       const STATION_COST = 50000000;
-      const AIRPORT_COST = 500000000; // 500M
+      const AIRPORT_COST = 500000000; 
       const VEHICLE_BASE_COST = 8000000;
-      const AIRPLANE_BASE_COST = 50000000; // 50M
+      const AIRPLANE_BASE_COST = 50000000; 
 
       let VehicleData = {};
-      let map; // Leafletマップインスタンス
+      let map; 
 
       const Game = {
         userId: null,
         money: 0,
         totalConstructionCost: 0,
-        currentLoan: 0, // ★追加
-        monthlyRepayment: 0, // ★追加
+        currentLoan: 0, 
+        monthlyRepayment: 0, 
         establishedLines: [],
         allLines: {}, 
         stations: [],
@@ -560,12 +591,21 @@
         },
         
         updateFinancialUI() {
-            // 資産計算を簡略化
+            // 資産計算 (サーバーのロジックに合わせるため、車両資産を推定)
+            let totalVehicleAsset = 0;
+            this.vehicles.forEach(v => {
+                const data = VehicleData[v.dataKey];
+                if (!data) return;
+                const baseCost = data.category === 'air' ? AIRPLANE_BASE_COST : VEHICLE_BASE_COST;
+                totalVehicleAsset += baseCost * data.purchaseMultiplier * (v.formationSize || 1);
+            });
+            
+            // 総資産 = 資金 + 建設投資額 * 70% + 車両資産 * 30% - 負債
             const totalAsset =
                 this.money +
                 this.totalConstructionCost * 0.7 +
-                this.vehicles.length * VEHICLE_BASE_COST -
-                this.currentLoan; // ★負債を引く
+                totalVehicleAsset * 0.3 -
+                this.currentLoan; 
                 
             document.getElementById("money-display").textContent = `¥${Math.round(
                 this.money
@@ -582,8 +622,8 @@
                 this.monthlyRepayment
             ).toLocaleString()}`;
             
-            // 融資可能額の更新 (簡略化: 総資産の50%まで)
-            const maxLoan = Math.max(0, totalAsset * 0.5);
+            // 融資可能額の更新 
+            const maxLoan = Math.max(0, totalAsset * 0.5 - this.currentLoan);
             document.getElementById("max-loan-display").textContent = `¥${Math.round(maxLoan).toLocaleString()}`;
         },
 
@@ -623,14 +663,12 @@
             const timeString = `${date.getHours().toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')}`;
             li.innerHTML = `<small style="color: #888;">[${timeString}]</small> ${message}`;
             
-            // 最新のニュースを上に追加
             if (newsList.firstChild) {
                 newsList.insertBefore(li, newsList.firstChild);
             } else {
                 newsList.appendChild(li);
             }
             
-            // 最大10件に制限
             while (newsList.children.length > 10) {
                 newsList.removeChild(newsList.lastChild);
             }
@@ -733,26 +771,23 @@
       // B. ターミナルクラス定義
       // =========================================================
       
-      // ターミナルアイコンのスタイルを決定するヘルパー関数
       function getTerminalIconStyle(terminal, isAirport) {
         let baseClass = isAirport ? "airport-icon" : "station-icon";
         let colorClass = "normal";
 
         if (terminal.ownerId !== Game.userId) {
-            // 他人のターミナルは赤で固定
             return baseClass;
         }
 
         if (terminal.isOverloaded) {
-            colorClass = "overload"; // 容量超過
+            colorClass = "overload"; 
         } else if (terminal.isDemandHigh && !isAirport) {
-            colorClass = "demand"; // 需要高 (駅のみ)
+            colorClass = "demand"; 
         }
         
         return `${baseClass} ${colorClass}`;
       }
 
-      // 鉄道駅クラス
       class Station {
         constructor(id, latlng, map, ownerId, type = 'Small', capacity = 3, name, demand, lineConnections = [], isOverloaded = false, isDemandHigh = false) {
           this.id = id;
@@ -850,7 +885,6 @@
         }
       }
       
-      // 空港クラス ★追加
       class Airport {
         constructor(id, latlng, map, ownerId, type = 'Small', capacity = 5, name, lineConnections = [], isOverloaded = false) {
           this.id = id;
@@ -921,7 +955,6 @@
             }
             
             if (this.ownerId === Game.userId) {
-                // 空港のアップグレードロジックはサーバー側で別途実装が必要
                 popupContent += `<hr>空港のアップグレード機能は未実装です。`;
                 
                 popupContent += `<hr>
@@ -1025,7 +1058,6 @@
           updateRankingUI(ranking);
         });
 
-        // ターミナル関連のイベントハンドラを更新
         socket.on("terminalUpdate", (data) => {
             const terminalArray = data.isAirport ? Game.airports : Game.stations;
             const terminal = terminalArray.find(t => t.id === data.id);
@@ -1152,7 +1184,6 @@
           
           const rotationAngle = vehicle.rotation !== undefined ? vehicle.rotation : 0;
           
-          // 列車アイコンは回転させない（長方形の視認性維持のため）
           const rotationStyle = isAir 
             ? `transform: translate(-50%, -50%) rotate(${rotationAngle}deg);`
             : `transform: translate(-50%, -50%);`;
@@ -1163,7 +1194,7 @@
               vehicle.owner === Game.userId ? "yellow" : "white"
             }; ${rotationStyle}`,
           });
-          const popupContent = `${isAir ? '✈️' : '🚆'} 車両 #${vehicle.id} (Owner: ${vehicle.owner}) - Status: ${vehicle.status || 'Running'}`;
+          const popupContent = `${isAir ? '✈️' : '🚆'} 車両 #${vehicle.id} (Owner: ${vehicle.owner}) - Status: ${vehicle.status || 'Running'} (編成数: ${vehicle.formationSize || 1})`;
 
           longitudeOffsets.forEach((offset, index) => {
             const offsetLatLng = L.latLng(latlng.lat, latlng.lng + offset);
@@ -1263,7 +1294,6 @@
         }
       }
 
-      // 駅/空港のクリックハンドラを統合
       function handleTerminalClick(terminal) {
         if (Game.mode === "track") {
             if (terminal.isAirport) {
@@ -1284,7 +1314,7 @@
             alert("他プレイヤーの駅は路線のノードとして使用できません。");
             return;
           }
-      }
+        }
           if (lineCandidateNodes.includes(station)) return;
 
           lineCandidateNodes.push(station);
@@ -1292,7 +1322,7 @@
       }
       
       function handleAirRouteNodeClick(terminal) {
-          if (terminal.ownerId !== Game.userId) {
+          if (terminal.ownerId !== Game.userId && terminal.ownerId !== "ADMIN_SHARED") {
             alert("他プレイヤーの施設はノードとして使用できません。");
             return;
           }
@@ -1303,7 +1333,6 @@
           updateDrawingPolyline('air');
       }
       
-      // 建設コストと距離を計算し、UIを更新
       function updateConstructionInfo(trackType) {
           const infoDiv = document.getElementById("construction-info");
           
@@ -1326,7 +1355,6 @@
                   document.getElementById("construction-distance").textContent = `${currentConstructionDistance.toFixed(2)} km`;
                   document.getElementById("construction-cost").textContent = `¥${Math.round(currentConstructionCost).toLocaleString()}`;
                   
-                  // 地形補正を表示
                   const terrainPercent = ((result.avgTerrainMultiplier - 1) * 100).toFixed(1);
                   document.getElementById("construction-terrain").textContent = `${terrainPercent}%`;
               }
@@ -1471,33 +1499,30 @@
               return alert("借入額は正の値で、期間は6ヶ月以上に設定してください。");
           }
           
-          const amount = amountM * 1000000;
+          const amount = Math.round(amountM * 1000000);
           
-          if (amount > Game.money * 5) { // 簡易的なチェック
-              return alert("借入額が大きすぎます。総資産の5倍までが目安です。");
+          if (amount > Game.money * 10) { 
+              if (!confirm(`借入額 ¥${amount.toLocaleString()} は現在の資金の10倍以上です。本当に借りますか？`)) {
+                  return;
+              }
           }
           
           socket.emit('requestLoan', { amount: amount, termMonths: termMonths });
       };
 
-      // ★路線解体ロジックを修正し、Turf.jsを使ってポリライン全体への最短距離を計算
       function handleLineDismantle(e) {
         if (Game.mode !== "dismantle-line" || !socket) return;
 
         let closestLineId = null;
         let minDistance = Infinity;
-        // 50メートルをキロメートルに変換 (Turf.jsの距離単位に合わせる)
         const lineSearchRadiusKm = 0.05; 
 
-        // クリックした座標をTurfのポイント形式 (LngLat) に変換
         const clickPoint = turf.point([e.latlng.lng, e.latlng.lat]);
 
         Object.entries(Game.allLines).forEach(([lineId, polylines]) => {
-          // polylinesはオフセットされた3つのポリラインを含む配列
           polylines.forEach(polyline => {
               if (!polyline) return;
 
-              // LeafletのLatLngsをTurfのLineString形式 (LngLat) に変換
               const latlngs = polyline.getLatLngs();
               const coords = latlngs.map(ll => [ll.lng, ll.lat]);
               
@@ -1505,7 +1530,6 @@
 
               const line = turf.lineString(coords);
               
-              // クリック点からポリラインまでの最短距離を計算 (キロメートル単位)
               const distanceKm = turf.pointToLineDistance(clickPoint, line, { units: 'kilometers' });
               
               if (distanceKm < minDistance && distanceKm < lineSearchRadiusKm) {
@@ -1595,6 +1619,7 @@
             .classList.add("active");
           map.on("click", handleLineDismantle);
         } else {
+          // アイドルの場合、駅モードボタンをアクティブにする (デフォルト)
           document.getElementById("btn-station-mode").classList.add("active"); 
           Game.currentTrackType = "single";
         }
@@ -1629,8 +1654,9 @@
           const data = VehicleData[key];
           const isAir = data.category === 'air';
           const baseCost = isAir ? AIRPLANE_BASE_COST : VEHICLE_BASE_COST;
-          const purchaseCost = baseCost * data.purchaseMultiplier;
+          const purchaseCost = baseCost * data.purchaseMultiplier; // 単編成コスト
           const icon = isAir ? '✈️' : '🚆';
+          const maxFormation = data.maxFormation || 1;
 
           const availableLines = Game.establishedLines.filter((line) => {
             const isLinear = data.name.includes("リニア");
@@ -1639,7 +1665,6 @@
                 return line.trackType === 'air';
             }
             
-            // 鉄道車両のチェック
             if (line.trackType === 'air') return false; 
             
             if (isLinear) return line.trackType === "linear";
@@ -1648,11 +1673,11 @@
             return true;
           });
 
-          const lineSelect = `<select id="line-select-${key}" style="width: 50%; margin-right: 5px;">
+          const lineSelect = `<select id="line-select-${key}" style="width: 35%; margin-right: 5px; margin-top: 5px;">
                     ${availableLines
                       .map(
                         (line) =>
-                          `<option value="${line.id}">Line ${line.id} (${line.trackType === 'air' ? '航空' : line.trackType})</option>`
+                          `<option value="${line.id}">L${line.id} (${line.trackType === 'air' ? '航空' : line.trackType})</option>`
                       )
                       .join("")}
                 </select>`;
@@ -1660,15 +1685,17 @@
           const disabled = availableLines.length === 0 ? "disabled" : "";
 
           container.innerHTML += `
-                    <div style="display: flex; align-items: center; margin-bottom: 5px;">
-                        <span style="width: 100px; color: ${data.color};">${icon} ${
+                    <div style="display: flex; flex-wrap: wrap; align-items: center; margin-bottom: 5px; border-bottom: 1px dotted #ccc; padding-bottom: 5px;">
+                        <span style="width: 100%; font-weight: bold; color: ${data.color};">${icon} ${
             data.name
           }</span>
-                        <small style="flex-grow: 1; margin-left: 10px;">${
+                        <small style="width: 100%; margin-bottom: 5px;">${
                           data.maxSpeedKmH
-                        }km/h, ¥${purchaseCost.toLocaleString()}</small>
+                        }km/h, ¥${purchaseCost.toLocaleString()} (単編成)</small>
+                        
                         ${lineSelect}
-                        <button onclick="buyVehicle('${key}')" style="width: 45%;" ${disabled}>購入</button>
+                        <input type="number" id="formation-input-${key}" min="1" max="${maxFormation}" value="1" style="width: 30%; margin-right: 5px;" title="編成数 (最大${maxFormation})">
+                        <button onclick="buyVehicle('${key}')" style="width: 25%;" ${disabled}>購入</button>
                     </div>
                 `;
         });
@@ -1677,13 +1704,22 @@
       window.buyVehicle = (vehicleKey) => {
         if (!socket) return alert("サーバーに接続されていません。");
         const lineSelect = document.getElementById(`line-select-${vehicleKey}`);
+        const formationInput = document.getElementById(`formation-input-${vehicleKey}`);
+        
         if (!lineSelect || lineSelect.value === "") {
           alert("割り当てる路線を選択してください。");
           return;
         }
+        
         const lineId = lineSelect.value;
+        const formationSize = parseInt(formationInput ? formationInput.value : 1, 10);
+        
+        if (formationSize < 1 || isNaN(formationSize)) {
+            alert("編成数は1以上である必要があります。");
+            return;
+        }
 
-        socket.emit("buyVehicle", { lineId: lineId, vehicleKey: vehicleKey });
+        socket.emit("buyVehicle", { lineId: lineId, vehicleKey: vehicleKey, formationSize: formationSize });
       };
 
       window.toggleAccordion = (contentId) => {
@@ -1691,12 +1727,11 @@
         const header = content.previousElementSibling;
         const icon = header.querySelector("span:last-child");
 
-        content.classList.toggle("open");
+        const isOpen = content.classList.toggle("open");
         
-        // アコーディオンの開閉時にスクロール高さを設定
-        if (content.classList.contains("open")) {
+        if (isOpen) {
           icon.textContent = "▼";
-          // max-height: none は transition が効かないため、scrollHeightを使用
+          // max-heightを計算して設定
           content.style.maxHeight = content.scrollHeight + "px"; 
         } else {
           icon.textContent = "▲";
@@ -1753,24 +1788,31 @@
           { attribution: "国土地理院", opacity: 0.5 }
         ).addTo(map);
 
+        // モバイル対応のため、UIコントロールをマップ外に配置
         const controlDiv = document.querySelector(".rail-ui-control");
         const controlHtml = controlDiv.innerHTML;
         controlDiv.remove();
 
-        const constructControl = L.control({ position: "topleft" });
-        constructControl.onAdd = function (map) {
-          const div = L.DomUtil.create("div", "rail-ui-control");
-          div.innerHTML = controlHtml;
-          L.DomEvent.disableClickPropagation(div);
-          
-          const trackTypeSelect = div.querySelector("#track-type");
-          if (trackTypeSelect) {
-              trackTypeSelect.value = Game.currentTrackType;
-          }
-          
-          return div;
-        };
-        constructControl.addTo(map);
+        // Leafletコントロールとして再配置 (PC向け)
+        if (window.innerWidth > 650) {
+            const constructControl = L.control({ position: "topleft" });
+            constructControl.onAdd = function (map) {
+              const div = L.DomUtil.create("div", "rail-ui-control");
+              div.innerHTML = controlHtml;
+              L.DomEvent.disableClickPropagation(div);
+              
+              const trackTypeSelect = div.querySelector("#track-type");
+              if (trackTypeSelect) {
+                  trackTypeSelect.value = Game.currentTrackType;
+              }
+              
+              return div;
+            };
+            constructControl.addTo(map);
+        } else {
+            // モバイルの場合は、body直下に再挿入された要素がそのまま使用される
+            document.querySelector('.rail-ui-control').innerHTML = controlHtml;
+        }
 
         toggleConstructionMode("idle");
 
@@ -1790,4 +1832,3 @@
       });
     </script>
   </body>
-</html>
