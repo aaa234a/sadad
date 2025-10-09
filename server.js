@@ -90,7 +90,7 @@ function getTerminalById(terminalId, isAirport) {
     return ServerGame.globalStats.stations.find((station) => station.id === terminalId) || null;
 }
 
-function findTerminalByCoordinate(lat, lng, tolerance = 1e-5) {
+function findTerminalByCoordinate(lat, lng, tolerance = 1e-4) { // 許容誤差を1e-4に拡大
     const candidate = ServerGame.globalStats.stations.find((station) =>
         coordinatesAlmostEqual([station.lat, station.lng], [lat, lng], tolerance)
     );
@@ -1512,12 +1512,9 @@ async function loadUserData(userId) {
     const lineManagers = linesRes.map(row => {
         const coords = row.coords; 
         
-        // 路線に接続されているターミナルを座標から再構築
-        const lineTerminalCoords = [coords[0], coords[coords.length - 1]];
-        
         // 路線上のすべての座標をチェックし、ターミナル座標と一致するものを見つける
         const lineTerminals = coords.map(coord => 
-            allTerminals.find(t => coordinatesAlmostEqual([t.lat, t.lng], coord))
+            allTerminals.find(t => coordinatesAlmostEqual([t.lat, t.lng], coord, 1e-4))
         ).filter(t => t);
         
         // 重複を排除
@@ -1569,7 +1566,7 @@ async function calculateRanking() {
         vehicles.forEach(v => {
             const data = VehicleData[v.dataKey];
             if (!data) return;
-            const baseCost = data.category === 'air' ? AIRPLANE_BASE_COST : VEHICLE_BASE_COST;
+            const baseCost = v.category === 'air' ? AIRPLANE_BASE_COST : VEHICLE_BASE_COST;
             totalVehicleAsset += baseCost * data.purchaseMultiplier * (v.formationSize || 1);
         });
         
@@ -2383,7 +2380,7 @@ io.on('connection', (socket) => {
 
             const allTerminals = [...ServerGame.globalStats.stations, ...ServerGame.globalStats.airports];
             const lineTerminals = data.terminalCoords.map(coord => 
-                allTerminals.find(t => coordinatesAlmostEqual([t.lat, t.lng], coord))
+                allTerminals.find(t => coordinatesAlmostEqual([t.lat, t.lng], coord, 1e-4))
             ).filter(t => t);
 
             const isValidConstruction = lineTerminals.every(t => {
@@ -2479,79 +2476,98 @@ io.on('connection', (socket) => {
             ? lineManager.stations[0] 
             : lineManager.stations[lineManager.stations.length - 1];
         
-        // 新しい終点ターミナル
-        const newTerminalCoord = newTerminalCoords[0];
-        const newTerminal = findTerminalByCoordinate(newTerminalCoord[0], newTerminalCoord[1]);
+        let totalExtensionCost = 0;
+        let totalExtensionLengthKm = 0;
+        let newTerminalsToAdd = [];
+        let newCoordsSegments = [];
         
-        if (!newTerminal || !newTerminal.terminal) {
-            socket.emit('error', '新しい終点ターミナルが見つかりません。');
-            return;
+        let lastCoord = [existingTerminal.lat, existingTerminal.lng];
+
+        for (let i = 0; i < newTerminalCoords.length; i++) {
+            const currentCoord = newTerminalCoords[i];
+            
+            const newTerminal = findTerminalByCoordinate(currentCoord[0], currentCoord[1]);
+            
+            if (!newTerminal || !newTerminal.terminal) {
+                socket.emit('error', `延長ノード ${i + 1} のターミナルが見つかりません。`);
+                return;
+            }
+            
+            const terminalToAdd = newTerminal.terminal;
+            
+            // 権限チェック
+            if (terminalToAdd.ownerId !== userId && terminalToAdd.ownerId !== 'ADMIN_SHARED') {
+                socket.emit('error', `延長ノード ${i + 1} は他プレイヤーの施設です。`);
+                return;
+            }
+            
+            // 路線タイプ適合性チェック
+            const isAirRoute = lineManager.trackType === 'air';
+            if (isAirRoute && !terminalToAdd.isAirport) {
+                socket.emit('error', `延長ノード ${i + 1} は航空路線に不適です。`);
+                return;
+            }
+            if (!isAirRoute && terminalToAdd.isAirport) {
+                socket.emit('error', `延長ノード ${i + 1} は鉄道路線に不適です。`);
+                return;
+            }
+            
+            // 延長部分のコスト計算
+            let segmentCoords;
+            if (isAirRoute) {
+                segmentCoords = calculateGreatCirclePath(lastCoord, currentCoord);
+            } else {
+                segmentCoords = [lastCoord, currentCoord]; 
+            }
+            
+            const { cost: segmentCost, lengthKm: segmentLengthKm } = calculateConstructionCost(lastCoord, currentCoord, lineManager.trackType);
+            
+            totalExtensionCost += segmentCost;
+            totalExtensionLengthKm += segmentLengthKm;
+            
+            newTerminalsToAdd.push(terminalToAdd);
+            newCoordsSegments.push(segmentCoords);
+            lastCoord = currentCoord;
         }
         
-        const terminalToAdd = newTerminal.terminal;
-        
-        // 権限チェック
-        if (terminalToAdd.ownerId !== userId && terminalToAdd.ownerId !== 'ADMIN_SHARED') {
-            socket.emit('error', '他プレイヤーの施設には延長できません。');
-            return;
-        }
-        
-        // 既存の路線タイプと延長先のターミナルの適合性チェック
-        const isAirRoute = lineManager.trackType === 'air';
-        if (isAirRoute && !terminalToAdd.isAirport) {
-            socket.emit('error', '航空路線は空港にのみ延長できます。');
-            return;
-        }
-        if (!isAirRoute && terminalToAdd.isAirport) {
-            socket.emit('error', '鉄道路線は鉄道駅にのみ延長できます。');
-            return;
-        }
-        
-        // 延長部分のコスト計算
-        const coord1 = [existingTerminal.lat, existingTerminal.lng];
-        const coord2 = newTerminalCoord;
-        
-        let segmentCoords;
-        if (isAirRoute) {
-            // 航空路線の場合は大圏航路を計算
-            segmentCoords = calculateGreatCirclePath(coord1, coord2);
-        } else {
-            segmentCoords = [coord1, coord2]; 
-        }
-        
-        const { cost: extensionCost, lengthKm: extensionLengthKm } = calculateConstructionCost(coord1, coord2, lineManager.trackType);
-        
-        if (user.money < extensionCost) {
-            socket.emit('error', `資金不足です！延長費用: ¥${extensionCost.toLocaleString()}`);
+        if (user.money < totalExtensionCost) {
+            socket.emit('error', `資金不足です！延長費用: ¥${totalExtensionCost.toLocaleString()}`);
             return;
         }
         
         // 資金の更新
-        user.money -= extensionCost;
-        user.totalConstructionCost += extensionCost;
+        user.money -= totalExtensionCost;
+        user.totalConstructionCost += totalExtensionCost;
         
         // 路線データの更新
         let newCoords = [...lineManager.coords];
-        let newStations = lineManager.stations.slice(); // シャローコピー
+        let newStations = lineManager.stations.slice();
         
+        let segmentCoordsFlat = [];
+        newCoordsSegments.forEach(seg => {
+            // 既存の座標と重複する最初のノードを削除
+            if (segmentCoordsFlat.length > 0 || newCoords.length > 0) {
+                seg.shift(); 
+            }
+            segmentCoordsFlat = segmentCoordsFlat.concat(seg);
+        });
+
         if (isExtendStart) {
             // 始点から延長する場合
-            segmentCoords.pop(); // 既存の始点と重複するため削除
-            newCoords = segmentCoords.reverse().concat(newCoords);
-            newStations.unshift(terminalToAdd);
+            newCoords = segmentCoordsFlat.reverse().concat(newCoords);
+            newStations = newTerminalsToAdd.reverse().concat(newStations);
         } else {
             // 終点から延長する場合
-            segmentCoords.shift(); // 既存の終点と重複するため削除
-            newCoords = newCoords.concat(segmentCoords);
-            newStations.push(terminalToAdd);
+            newCoords = newCoords.concat(segmentCoordsFlat);
+            newStations = newStations.concat(newTerminalsToAdd);
         }
         
         lineManager.coords = newCoords;
         lineManager.stations = newStations;
-        lineManager.cost += extensionCost;
-        lineManager.lengthKm += extensionLengthKm;
+        lineManager.cost += totalExtensionCost;
+        lineManager.lengthKm += totalExtensionLengthKm;
         
-        // 車両のルート情報をリセット（次回シミュレーションループで再計算される）
+        // 車両のルート情報をリセット
         lineManager.vehicles.forEach(v => {
             v.coords = newCoords;
             v.terminals = newStations;
@@ -2587,18 +2603,23 @@ io.on('connection', (socket) => {
         }
 
         // ターミナル接続情報の更新
-        terminalToAdd.addLine(lineId);
-        const Model = terminalToAdd.isAirport ? AirportModel : StationModel;
-        await Model.updateOne(
-            { id: terminalToAdd.id },
-            { $set: { lineConnections: terminalToAdd.lineConnections } }
-        );
-        
-        io.emit('terminalUpdate', { 
-            id: terminalToAdd.id, 
-            isAirport: terminalToAdd.isAirport, 
-            lineConnections: terminalToAdd.lineConnections 
+        const updatePromises = [];
+        newTerminalsToAdd.forEach(terminal => {
+            terminal.addLine(lineId);
+            const Model = terminal.isAirport ? AirportModel : StationModel;
+            updatePromises.push(Model.updateOne(
+                { id: terminal.id },
+                { $set: { lineConnections: terminal.lineConnections } }
+            ));
+            
+            io.emit('terminalUpdate', { 
+                id: terminal.id, 
+                isAirport: terminal.isAirport, 
+                lineConnections: terminal.lineConnections 
+            });
         });
+        await Promise.all(updatePromises);
+
 
         // クライアントへ更新を通知
         io.emit('lineUpdated', {
@@ -2626,7 +2647,7 @@ io.on('connection', (socket) => {
             vehicles: user.vehicles.map(v => ({ id: v.id, data: v.data, formationSize: v.formationSize })), 
         });
         
-        socket.emit('info', `路線 ${lineId} を延長しました。費用: ¥${extensionCost.toLocaleString()}`);
+        socket.emit('info', `路線 ${lineId} を延長しました。費用: ¥${totalExtensionCost.toLocaleString()}`);
     });
     
     socket.on('buyVehicle', async (data) => {
