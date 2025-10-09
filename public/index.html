@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="ja">
   <head>
@@ -60,8 +59,8 @@
         top: 10px;
         left: 10px;
         width: 300px;
-        max-height: 85vh; 
-        overflow-y: auto; 
+        max-height: 85vh;
+        overflow-y: auto;
       }
 
       #extend-line-panel {
@@ -97,7 +96,7 @@
         width: 300px;
         line-height: 1.5;
       }
-      
+
       /* チャットパネル位置 (右下) */
       #chat-panel {
         bottom: 10px;
@@ -105,10 +104,10 @@
         width: 300px;
         max-height: 240px;
       }
-      
+
       /* ランキングパネル位置 (チャットパネルの上) */
       #ranking-panel {
-        bottom: 250px; 
+        bottom: 250px;
         right: 10px;
         width: 300px;
         max-height: 240px;
@@ -164,12 +163,12 @@
 
       /* 列車アイコンの調整: 丸から長方形に変更 */
       .train-icon {
-        width: 18px; 
-        height: 8px; 
-        border-radius: 2px; 
+        width: 18px;
+        height: 8px;
+        border-radius: 2px;
         border: 2px solid #fff;
         box-shadow: 0 0 5px rgba(0, 0, 0, 0.8);
-        transform: translate(-50%, -50%); 
+        transform: translate(-50%, -50%);
       }
       .station-icon {
         background-color: #000;
@@ -180,11 +179,17 @@
         box-shadow: 0 0 5px rgba(0, 0, 0, 0.8);
         cursor: pointer;
       }
-      
+
       /* 動的な駅アイコンカラー */
-      .station-icon.normal { background-color: #0044BB; }
-      .station-icon.overload { background-color: #FF0000; }
-      .station-icon.demand { background-color: #FFCC00; }
+      .station-icon.normal {
+        background-color: #0044bb;
+      }
+      .station-icon.overload {
+        background-color: #ff0000;
+      }
+      .station-icon.demand {
+        background-color: #ffcc00;
+      }
 
       /* 空港アイコン */
       .airport-icon {
@@ -201,33 +206,37 @@
         color: white;
         font-weight: bold;
       }
-      
+
       /* 動的な空港アイコンカラー */
-      .airport-icon.normal { background-color: #007bff; }
-      .airport-icon.overload { background-color: #FF0000; }
+      .airport-icon.normal {
+        background-color: #007bff;
+      }
+      .airport-icon.overload {
+        background-color: #ff0000;
+      }
 
       /* 飛行機アイコン (回転対応) */
       .airplane-icon {
-        width: 24px; 
+        width: 24px;
         height: 24px;
-        background-color: #5bc0de; 
-        border-radius: 2px; 
+        background-color: #5bc0de;
+        border-radius: 2px;
         border: 2px solid #fff;
         box-shadow: 0 0 5px rgba(0, 0, 0, 0.8);
         clip-path: polygon(
-            50% 0%, 
-            60% 25%, 
-            100% 50%, 
-            60% 75%, 
-            50% 100%, 
-            40% 75%, 
-            0% 50%, 
-            40% 25%
-        ); 
+          50% 0%,
+          60% 25%,
+          100% 50%,
+          60% 75%,
+          50% 100%,
+          40% 75%,
+          0% 50%,
+          40% 25%
+        );
         transform: translate(-50%, -50%);
-        transform-origin: 50% 50%; 
+        transform-origin: 50% 50%;
       }
-      
+
       .leaflet-container.station-mode,
       .leaflet-container.airport-mode {
         cursor: crosshair;
@@ -259,7 +268,7 @@
         background-color: #44aaff;
         color: white;
       }
-      
+
       /* ========================================================= */
       /* UI重なり防止のためのメディアクエリ */
       /* ========================================================= */
@@ -269,75 +278,75 @@
         #ranking-panel,
         #chat-panel,
         #news-feed-panel {
-            width: 95%;
-            left: 2.5%;
-            right: auto;
-            position: relative; 
-            margin-bottom: 10px;
+          width: 95%;
+          left: 2.5%;
+          right: auto;
+          position: relative;
+          margin-bottom: 10px;
         }
 
         body {
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            padding-bottom: 260px; 
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          padding-bottom: 260px;
         }
-        
+
         #map {
-            position: fixed;
-            top: 0;
-            left: 0;
-            height: 100%;
-            width: 100%;
-            z-index: 0;
+          position: fixed;
+          top: 0;
+          left: 0;
+          height: 100%;
+          width: 100%;
+          z-index: 0;
         }
 
         /* 建設コントロール (左上 -> 上部全体) */
         .rail-ui-control {
-            top: 10px;
-            max-height: 40vh; 
-            z-index: 1001;
+          top: 10px;
+          max-height: 40vh;
+          z-index: 1001;
         }
 
         /* 統計情報 (右上 -> 建設の下) */
         #game-stats {
-            top: auto;
-            right: auto;
-            z-index: 1001;
+          top: auto;
+          right: auto;
+          z-index: 1001;
         }
 
         /* ニュースフィード (左下 -> 統計の下) */
         #news-feed-panel {
-            top: auto;
-            left: 2.5%;
-            right: auto;
-            z-index: 1001;
+          top: auto;
+          left: 2.5%;
+          right: auto;
+          z-index: 1001;
         }
-        
+
         /* ランキングとチャットは画面下部に固定 */
         #ranking-panel,
         #chat-panel {
-            position: fixed;
-            width: 95%;
-            left: 2.5%;
-            right: auto;
-            z-index: 1002;
+          position: fixed;
+          width: 95%;
+          left: 2.5%;
+          right: auto;
+          z-index: 1002;
         }
 
         /* ランキング (チャットの上) */
         #ranking-panel {
-            bottom: 130px;
-            max-height: 120px;
+          bottom: 130px;
+          max-height: 120px;
         }
 
         /* チャット (最下部) */
         #chat-panel {
-            bottom: 10px;
-            max-height: 120px;
+          bottom: 10px;
+          max-height: 120px;
         }
-        
+
         #chat-messages {
-            height: 50px !important;
+          height: 50px !important;
         }
       }
     </style>
@@ -394,17 +403,21 @@
         </p>
       </div>
     </div>
-    
+
     <!-- ニュースフィードパネル (左下) -->
     <div id="news-feed-panel">
-        <div class="accordion-header" onclick="toggleAccordion('news-content')">
-            <span>📰 ニュースフィード <span id="news-toggle-icon">▼</span></span>
-        </div>
-        <div id="news-content" class="accordion-content open" style="max-height: 150px; overflow-y: auto;">
-            <ul id="news-list" style="list-style: none; padding: 0; margin: 0;">
-                <li>システム: ゲーム開始！</li>
-            </ul>
-        </div>
+      <div class="accordion-header" onclick="toggleAccordion('news-content')">
+        <span>📰 ニュースフィード <span id="news-toggle-icon">▼</span></span>
+      </div>
+      <div
+        id="news-content"
+        class="accordion-content open"
+        style="max-height: 150px; overflow-y: auto"
+      >
+        <ul id="news-list" style="list-style: none; padding: 0; margin: 0">
+          <li>システム: ゲーム開始！</li>
+        </ul>
+      </div>
     </div>
 
     <!-- 建設・車両コントロール (左上) -->
@@ -417,28 +430,47 @@
       </div>
       <div id="control-content" class="accordion-content open">
         <div style="text-align: center; margin-bottom: 10px">
-          
           <!-- 融資パネル -->
-          <hr style="margin: 10px 0; border: none; border-top: 2px solid #888;" />
+          <hr style="margin: 10px 0; border: none; border-top: 2px solid #888" />
           <h3>🏦 銀行融資</h3>
           <div id="loan-panel">
             <p>現在の借入: <span id="current-loan-display">¥0</span></p>
             <p>借入可能額: <span id="max-loan-display">¥0</span></p>
-            <input type="number" id="loan-amount-input" placeholder="借入希望額 (M)" style="width: 48%; display: inline-block;">
-            <input type="number" id="loan-term-input" placeholder="期間 (月)" style="width: 48%; display: inline-block;">
+            <input
+              type="number"
+              id="loan-amount-input"
+              placeholder="借入希望額 (M)"
+              style="width: 48%; display: inline-block"
+            />
+            <input
+              type="number"
+              id="loan-term-input"
+              placeholder="期間 (月)"
+              style="width: 48%; display: inline-block"
+            />
             <button onclick="requestLoan()">融資を申し込む</button>
           </div>
-          
+
           <!-- 建設コスト詳細 -->
-          <div id="construction-info" style="margin-top: 10px; padding: 5px; border: 1px solid #ccc; display: none;">
+          <div
+            id="construction-info"
+            style="
+              margin-top: 10px;
+              padding: 5px;
+              border: 1px solid #ccc;
+              display: none;
+            "
+          >
             <b>建設予定:</b>
             <p>距離: <span id="construction-distance">0.0 km</span></p>
             <p>概算コスト: <span id="construction-cost">¥0</span></p>
             <p>地形補正: <span id="construction-terrain">0%</span></p>
           </div>
-          
+
           <!-- 鉄道インフラ -->
-          <hr style="margin: 10px 0; border: none; border-top: 2px solid #333;" />
+          <hr
+            style="margin: 10px 0; border: none; border-top: 2px solid #333"
+          />
           <h3>🚆 鉄道インフラ</h3>
           <button
             id="btn-station-mode"
@@ -454,16 +486,24 @@
           </button>
 
           <!-- 航空インフラ -->
-          <hr style="margin: 10px 0; border: none; border-top: 2px solid #007bff;" />
+          <hr
+            style="margin: 10px 0; border: none; border-top: 2px solid #007bff"
+          />
           <h3>✈️ 航空インフラ</h3>
-          <button id="btn-airport-mode" onclick="toggleConstructionMode('airport')">
-              ✈️ 空港モード (¥500M)
+          <button
+            id="btn-airport-mode"
+            onclick="toggleConstructionMode('airport')"
+          >
+            ✈️ 空港モード (¥500M)
           </button>
-          <button id="btn-air-route-mode" onclick="toggleConstructionMode('air-route')">
-              🛬 航空路線モード
+          <button
+            id="btn-air-route-mode"
+            onclick="toggleConstructionMode('air-route')"
+          >
+            🛬 航空路線モード
           </button>
           <button onclick="finalizeAirRoute()" style="margin-top: 5px">
-              ✅ 航空路線を確定
+            ✅ 航空路線を確定
           </button>
 
           <hr
@@ -498,24 +538,52 @@
             style="margin: 10px 0; border: none; border-top: 1px solid #ccc"
           />
 
+          <!-- 路線延長パネル -->
           <div id="extend-line-panel">
             <strong>路線延長モード</strong>
-            <p class="line-mode-hint" id="extend-line-hint">既存路線を選択してください。</p>
-            <button id="btn-extend-line-start" onclick="beginLineExtension()" disabled>
+            <p class="line-mode-hint" id="extend-line-hint">
+              延長したい路線をクリックしてください。
+            </p>
+            <button
+              id="btn-extend-line-select"
+              onclick="toggleConstructionMode('extend-line')"
+              style="margin-bottom: 5px"
+            >
+              路線を選択
+            </button>
+            <button
+              id="btn-extend-line-start"
+              onclick="beginLineExtension()"
+              disabled
+              style="display: none"
+            >
               🔄 延長を開始
             </button>
-            <button id="btn-extend-line-confirm" onclick="confirmLineExtension()" disabled>
+            <button
+              id="btn-extend-line-confirm"
+              onclick="confirmLineExtension()"
+              disabled
+            >
               ✅ 延長を確定
             </button>
-            <button id="btn-extend-line-cancel" onclick="cancelLineExtension()" disabled>
+            <button
+              id="btn-extend-line-cancel"
+              onclick="cancelLineExtension()"
+              disabled
+            >
               ✖ 延長をキャンセル
             </button>
-            <button id="btn-extend-line-delete" onclick="deleteTransientExtension()" disabled>
+            <button
+              id="btn-extend-line-delete"
+              onclick="deleteTransientExtension()"
+              disabled
+            >
               🧹 仮延長を削除
             </button>
           </div>
 
-          <label style="display: block; margin-bottom: 5px; font-weight: bold"
+          <label
+            style="display: block; margin-bottom: 5px; font-weight: bold"
             >線路/路線タイプ:</label
           >
           <select id="track-type" onchange="Game.currentTrackType = this.value">
@@ -536,11 +604,32 @@
         <span>💬 チャット <span id="chat-toggle-icon">▼</span></span>
       </div>
       <div id="chat-content" class="accordion-content open">
-        <div id="chat-messages" style="height: 150px; overflow-y: auto; border: 1px solid #ccc; padding: 5px; margin-bottom: 5px; background-color: #f9f9f9;">
+        <div
+          id="chat-messages"
+          style="
+            height: 150px;
+            overflow-y: auto;
+            border: 1px solid #ccc;
+            padding: 5px;
+            margin-bottom: 5px;
+            background-color: #f9f9f9;
+          "
+        >
           <!-- メッセージがここに追加される -->
         </div>
-        <input type="text" id="chat-input" placeholder="メッセージを入力..." maxlength="200" style="width: 70%; padding: 5px; box-sizing: border-box;">
-        <button onclick="sendMessage()" style="width: 25%; margin-left: 5px; padding: 5px; box-sizing: border-box;">送信</button>
+        <input
+          type="text"
+          id="chat-input"
+          placeholder="メッセージを入力..."
+          maxlength="200"
+          style="width: 70%; padding: 5px; box-sizing: border-box"
+        />
+        <button
+          onclick="sendMessage()"
+          style="width: 25%; margin-left: 5px; padding: 5px; box-sizing: border-box"
+        >
+          送信
+        </button>
       </div>
     </div>
 
@@ -566,7 +655,7 @@
     <div id="error-message" style="display: none"></div>
     <div id="info-message" style="display: none"></div>
 
-     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@turf/turf@6/turf.min.js"></script>
     <script src="/socket.io/socket.io.js"></script>
 
@@ -577,30 +666,41 @@
       const INITIAL_LAT = 35.681236;
       const INITIAL_LNG = 139.767125;
       const STATION_COST = 50000000;
-      const AIRPORT_COST = 500000000; 
+      const AIRPORT_COST = 500000000;
       const VEHICLE_BASE_COST = 8000000;
-      const AIRPLANE_BASE_COST = 50000000; 
+      const AIRPLANE_BASE_COST = 50000000;
 
       let VehicleData = {};
-      let map; 
+      let map;
 
       const Game = {
         userId: null,
         money: 0,
         totalConstructionCost: 0,
-        currentLoan: 0, 
-        monthlyRepayment: 0, 
+        currentLoan: 0,
+        monthlyRepayment: 0,
         establishedLines: [],
-        allLines: {}, 
+        allLines: {},
         stations: [],
-        airports: [], 
+        airports: [],
         vehicles: [],
-        allVehicleMarkers: {}, 
+        allVehicleMarkers: {},
         mode: "idle",
         currentTrackType: "single",
-        
+
         _lastLineCount: 0,
         _lastVehicleCount: 0,
+        
+        // 路線延長用状態
+        extendLine: {
+            active: false,
+            lineId: null,
+            lineData: null,
+            isExtendStart: null, // true: 始点から延長, false: 終点から延長
+            startTerminal: null,
+            endTerminal: null,
+            transientPolyline: null,
+        },
 
         updateStats(data) {
           this.money = data.money !== undefined ? data.money : this.money;
@@ -618,11 +718,12 @@
             data.vehicles !== undefined ? data.vehicles : this.vehicles;
 
           if (data.stations || data.airports) this.drawTerminals(data.stations, data.airports);
-          if (data.allLines) this.drawLines(data.allLines);
+          // allLinesはlineBuilt/lineUpdatedイベントで更新されるため、initialState以外では不要
+          // if (data.allLines) this.drawLines(data.allLines); 
 
           this.updateFinancialUI();
         },
-        
+
         updateFinancialUI() {
             // 資産計算 (サーバーのロジックに合わせるため、車両資産を推定)
             let totalVehicleAsset = 0;
@@ -787,6 +888,17 @@
             );
             
             const polyline = L.polyline(offsetCoords, finalStyle).addTo(map);
+            
+            // 路線延長モードのクリックイベントを追加
+            if (isMyLine) {
+                polyline.on('click', (e) => {
+                    if (Game.mode === 'extend-line') {
+                        handleLineSelectionForExtension(line, e);
+                        L.DomEvent.stopPropagation(e);
+                    }
+                });
+            }
+            
             polylines.push(polyline);
           });
           
@@ -803,7 +915,7 @@
       // =========================================================
       // B. ターミナルクラス定義
       // =========================================================
-      
+
       function getTerminalIconStyle(terminal, isAirport) {
         let baseClass = isAirport ? "airport-icon" : "station-icon";
         let colorClass = "normal";
@@ -917,7 +1029,7 @@
             this.drawMarkers(map);
         }
       }
-      
+
       class Airport {
         constructor(id, latlng, map, ownerId, type = 'Small', capacity = 5, name, lineConnections = [], isOverloaded = false) {
           this.id = id;
@@ -1141,6 +1253,22 @@
         socket.on("lineBuilt", (data) => {
           Game.drawLine(data);
         });
+        
+        socket.on("lineUpdated", (data) => {
+            // 既存の路線を削除
+            if (Game.allLines[data.id]) {
+                Game.allLines[data.id].forEach(p => map.removeLayer(p));
+                delete Game.allLines[data.id];
+            }
+            // 新しい路線を描画
+            Game.drawLine(data);
+            
+            // ユーザーのestablishedLinesも更新
+            const lineIndex = Game.establishedLines.findIndex(l => l.id === data.id);
+            if (lineIndex !== -1) {
+                Game.establishedLines[lineIndex] = data;
+            }
+        });
 
         socket.on("lineDismantled", (data) => {
           if (Game.allLines[data.lineId]) {
@@ -1338,6 +1466,8 @@
             handleAirRouteNodeClick(terminal);
         } else if (Game.mode === "dismantle-station") {
             handleTerminalDismantle(terminal);
+        } else if (Game.mode === "extend-line" && Game.extendLine.lineId) {
+            handleExtendNodeClick(terminal);
         }
       }
       
@@ -1369,16 +1499,27 @@
       function updateConstructionInfo(trackType) {
           const infoDiv = document.getElementById("construction-info");
           
-          if (lineCandidateNodes.length < 2) {
-              infoDiv.style.display = 'none';
-              currentConstructionCost = 0;
-              currentConstructionDistance = 0;
-              return;
+          let coords;
+          
+          if (Game.mode === 'extend-line' && Game.extendLine.lineId) {
+              if (!Game.extendLine.endTerminal) {
+                  infoDiv.style.display = 'none';
+                  return;
+              }
+              const startCoord = [Game.extendLine.startTerminal.latlng.lat, Game.extendLine.startTerminal.latlng.lng];
+              const endCoord = [Game.extendLine.endTerminal.latlng.lat, Game.extendLine.endTerminal.latlng.lng];
+              coords = [startCoord, endCoord];
+          } else {
+              if (lineCandidateNodes.length < 2) {
+                  infoDiv.style.display = 'none';
+                  currentConstructionCost = 0;
+                  currentConstructionDistance = 0;
+                  return;
+              }
+              coords = lineCandidateNodes.map(t => [t.latlng.lat, t.latlng.lng]);
           }
           
           infoDiv.style.display = 'block';
-          
-          const coords = lineCandidateNodes.map(t => [t.latlng.lat, t.latlng.lng]);
           
           socket.emit('calculateConstructionCost', { coords: coords, trackType: trackType }, (result) => {
               if (result.success) {
@@ -1483,6 +1624,214 @@
         document.getElementById("construction-info").style.display = 'none';
         currentConstructionCost = 0;
         currentConstructionDistance = 0;
+      }
+      
+      // --- 路線延長機能関連のロジック ---
+
+      function handleLineSelectionForExtension(lineData, e) {
+          if (Game.mode !== 'extend-line') return;
+          
+          // 自分の路線でなければ選択不可
+          if (lineData.ownerId !== Game.userId) {
+              socket.emit('error', '自分の路線のみ延長可能です。');
+              return;
+          }
+          
+          // 既に選択済みの場合は何もしない
+          if (Game.extendLine.lineId === lineData.id) return;
+          
+          // 既存のハイライトを解除
+          cancelLineExtension();
+          
+          Game.extendLine.lineId = lineData.id;
+          Game.extendLine.lineData = lineData;
+          
+          // クリックされた位置が始点に近いか終点に近いかを判定
+          const coords = lineData.coords;
+          const startCoord = L.latLng(coords[0][0], coords[0][1]);
+          const endCoord = L.latLng(coords[coords.length - 1][0], coords[coords.length - 1][1]);
+          
+          const distToStart = e.latlng.distanceTo(startCoord);
+          const distToEnd = e.latlng.distanceTo(endCoord);
+          
+          const isExtendStart = distToStart < distToEnd;
+          Game.extendLine.isExtendStart = isExtendStart;
+          
+          // 延長開始ターミナルを特定
+          const terminalList = Game.stations.concat(Game.airports);
+          const startTerminalCoord = isExtendStart ? coords[0] : coords[coords.length - 1];
+          
+          const startTerminal = terminalList.find(t => 
+              t.latlng.lat === startTerminalCoord[0] && t.latlng.lng === startTerminalCoord[1]
+          );
+          
+          if (!startTerminal) {
+              socket.emit('error', '路線の端のターミナルが見つかりませんでした。');
+              cancelLineExtension();
+              return;
+          }
+          
+          Game.extendLine.startTerminal = startTerminal;
+          
+          document.getElementById('extend-line-hint').textContent = 
+              `路線 L${lineData.id} (${lineData.trackType}) を${isExtendStart ? '始点' : '終点'}から延長します。新しい終点ターミナルをクリックしてください。`;
+          
+          document.getElementById('btn-extend-line-select').classList.add('active');
+          document.getElementById('btn-extend-line-confirm').disabled = true;
+          document.getElementById('btn-extend-line-cancel').disabled = false;
+          
+          // 既存の路線ポリラインをハイライト
+          if (Game.allLines[lineData.id]) {
+              Game.allLines[lineData.id].forEach(p => p.setStyle({ weight: 12, opacity: 1, dashArray: '5, 5' }));
+          }
+      }
+
+      function handleExtendNodeClick(terminal) {
+          if (!Game.extendLine.lineId) {
+              socket.emit('error', '先に延長対象の路線を選択してください。');
+              return;
+          }
+          
+          // 延長開始ターミナルと同じ場所は選択不可
+          if (terminal.id === Game.extendLine.startTerminal.id) {
+              socket.emit('error', '延長開始点と同じターミナルは選択できません。');
+              return;
+          }
+          
+          // 路線タイプ適合性チェック
+          const isAirRoute = Game.extendLine.lineData.trackType === 'air';
+          if (isAirRoute && !terminal.isAirport) {
+              socket.emit('error', '航空路線は空港にのみ延長できます。');
+              return;
+          }
+          if (!isAirRoute && terminal.isAirport) {
+              socket.emit('error', '鉄道路線は鉄道駅にのみ延長できます。');
+              return;
+          }
+          
+          // 権限チェック
+          if (terminal.ownerId !== Game.userId && terminal.ownerId !== 'ADMIN_SHARED') {
+              socket.emit('error', '他プレイヤーの施設には延長できません。');
+              return;
+          }
+
+          Game.extendLine.endTerminal = terminal;
+          
+          // 仮ポリラインの描画
+          const startCoord = [Game.extendLine.startTerminal.latlng.lat, Game.extendLine.startTerminal.latlng.lng];
+          const endCoord = [terminal.latlng.lat, terminal.latlng.lng];
+          
+          deleteTransientExtension();
+          
+          const color = isAirRoute ? '#007bff' : '#FF0000';
+          const weight = isAirRoute ? 3 : 10;
+          
+          Game.extendLine.transientPolyline = L.polyline([startCoord, endCoord], {
+              color: color,
+              weight: weight,
+              opacity: 0.7,
+              dashArray: '1, 5',
+          }).addTo(map);
+          
+          updateConstructionInfo(Game.extendLine.lineData.trackType);
+          
+          document.getElementById('extend-line-hint').textContent = 
+              `${Game.extendLine.startTerminal.name} から ${terminal.name} へ延長します。`;
+          document.getElementById('btn-extend-line-confirm').disabled = false;
+          document.getElementById('btn-extend-line-delete').disabled = false;
+      }
+      
+      window.beginLineExtension = () => {
+          // 路線選択後にこのボタンは非表示になるため、この関数は使用しない。
+          // 路線選択時に自動的に延長ステップに移行する。
+      }
+      
+      window.confirmLineExtension = () => {
+          if (!Game.extendLine.lineId || !Game.extendLine.endTerminal || currentConstructionCost === 0) {
+              socket.emit('error', '延長する区間が設定されていません。');
+              return;
+          }
+          
+          const lineId = Game.extendLine.lineId;
+          const newTerminalCoord = [Game.extendLine.endTerminal.latlng.lat, Game.extendLine.endTerminal.latlng.lng];
+          const isExtendStart = Game.extendLine.isExtendStart;
+          
+          if (confirm(`路線 L${lineId} を延長しますか？ 費用: ¥${currentConstructionCost.toLocaleString()}`)) {
+              socket.emit('extendLine', {
+                  lineId: lineId,
+                  newTerminalCoords: [newTerminalCoord],
+                  isExtendStart: isExtendStart
+              });
+              cancelLineExtension();
+          }
+      }
+      
+      window.cancelLineExtension = () => {
+          if (!Game.extendLine.lineData) {
+              // 路線が選択されていない場合はUIだけリセット
+              resetExtendLineState();
+              return;
+          }
+          
+          // ハイライト解除
+          if (Game.extendLine.lineId && Game.allLines[Game.extendLine.lineId]) {
+              const lineData = Game.extendLine.lineData;
+              let weight = 8;
+              let dashArray = null;
+              if (lineData.trackType === "double") weight = 12;
+              else if (lineData.trackType === "linear") weight = 15;
+              else if (lineData.trackType === "tram") weight = 6;
+              else if (lineData.trackType === "air") { weight = 2; dashArray = '5, 10'; }
+              
+              Game.allLines[Game.extendLine.lineId].forEach(p => p.setStyle({ 
+                  weight: weight, 
+                  opacity: lineData.ownerId === Game.userId ? 1 : 0.7, 
+                  dashArray: dashArray 
+              }));
+          }
+          
+          resetExtendLineState();
+          toggleConstructionMode('idle');
+      }
+      
+      function resetExtendLineState() {
+          deleteTransientExtension();
+          
+          Game.extendLine = {
+              active: false,
+              lineId: null,
+              lineData: null,
+              isExtendStart: null,
+              startTerminal: null,
+              endTerminal: null,
+              transientPolyline: null,
+          };
+          
+          // UIをリセット
+          document.getElementById('extend-line-hint').textContent = '延長したい路線をクリックしてください。';
+          document.getElementById('btn-extend-line-select').classList.remove('active');
+          document.getElementById('btn-extend-line-confirm').disabled = true;
+          document.getElementById('btn-extend-line-cancel').disabled = true;
+          document.getElementById('btn-extend-line-delete').disabled = true;
+          document.getElementById("construction-info").style.display = 'none';
+      }
+      
+      window.deleteTransientExtension = () => {
+          if (Game.extendLine.transientPolyline) {
+              map.removeLayer(Game.extendLine.transientPolyline);
+              Game.extendLine.transientPolyline = null;
+          }
+          Game.extendLine.endTerminal = null;
+          document.getElementById('btn-extend-line-confirm').disabled = true;
+          document.getElementById('btn-extend-line-delete').disabled = true;
+          
+          const lineData = Game.extendLine.lineData;
+          if (lineData) {
+              const direction = Game.extendLine.isExtendStart ? '始点' : '終点';
+              document.getElementById('extend-line-hint').textContent = 
+                  `路線 L${lineData.id} を${direction}から延長します。新しい終点ターミナルをクリックしてください。`;
+          }
+          updateConstructionInfo(Game.extendLine.lineData ? Game.extendLine.lineData.trackType : 'single');
       }
 
       window.upgradeStation = (stationId, newType) => {
@@ -1603,6 +1952,20 @@
       function toggleConstructionMode(newMode) {
         const mapContainer = map.getContainer();
 
+        // 路線延長モードのUI表示/非表示を制御
+        const isLineMode = newMode === "track" || newMode === "air-route";
+        const isExtendMode = newMode === "extend-line";
+        document.getElementById("extend-line-panel").style.display = isLineMode || isExtendMode || Game.extendLine.lineId ? 'block' : 'none';
+        
+        // 路線延長モードをキャンセル
+        if (!isExtendMode) {
+            cancelLineExtension();
+        } else {
+            // 延長モード選択ボタンをアクティブ化し、他のボタンをリセット
+            document.getElementById('btn-extend-line-select').classList.add('active');
+            document.getElementById('btn-extend-line-cancel').disabled = false;
+        }
+
         L.DomUtil.removeClass(mapContainer, "station-mode");
         L.DomUtil.removeClass(mapContainer, "airport-mode");
         L.DomUtil.removeClass(mapContainer, "track-mode");
@@ -1620,7 +1983,11 @@
 
         document
           .querySelectorAll(".rail-ui-control button")
-          .forEach((btn) => btn.classList.remove("active"));
+          .forEach((btn) => {
+              if (btn.id !== 'btn-extend-line-select' && btn.id !== 'btn-extend-line-confirm' && btn.id !== 'btn-extend-line-cancel' && btn.id !== 'btn-extend-line-delete') {
+                  btn.classList.remove("active");
+              }
+          });
 
         if (newMode === "station") {
           L.DomUtil.addClass(mapContainer, "station-mode");
@@ -1651,6 +2018,10 @@
             .getElementById("btn-dismantle-line-mode")
             .classList.add("active");
           map.on("click", handleLineDismantle);
+        } else if (newMode === "extend-line") {
+            // 延長モードでは、ターミナルクリックを有効にするために一時的にtrack-modeのクラスを付与
+            L.DomUtil.addClass(mapContainer, "track-mode");
+            document.getElementById('extend-line-panel').style.display = 'block';
         } else {
           // アイドルの場合、駅モードボタンをアクティブにする (デフォルト)
           document.getElementById("btn-station-mode").classList.add("active"); 
@@ -1865,5 +2236,4 @@
       });
     </script>
   </body>
-
 </html>
