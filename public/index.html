@@ -1460,6 +1460,29 @@
             handleExtendNodeClick(terminal);
         }
       }
+            window.upgradeStation = (stationId, newType) => {
+        if (!socket) return alert("サーバーに接続されていません。");
+        
+        const station = Game.stations.find(s => s.id === stationId);
+        if (!station) return;
+
+        let cost = 0;
+        const currentType = station.type;
+
+        if (newType === 'Medium' && currentType === 'Small') {
+            cost = 50000000; 
+        } else if (newType === 'Large' && currentType === 'Small') {
+            cost = 150000000; 
+        } else if (newType === 'Large' && currentType === 'Medium') {
+            cost = 100000000; 
+        } else {
+            return; 
+        }
+
+        if (confirm(`${station.name} を ${newType} 駅にアップグレードしますか？ (費用: ¥${cost.toLocaleString()})`)) {
+            socket.emit("upgradeStation", { stationId: stationId, newType: newType, cost: cost });
+        }
+      };
       
       function handleTrackNodeClick(station) {
         if (station.ownerId !== "ADMIN_SHARED"){
