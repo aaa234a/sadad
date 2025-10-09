@@ -552,14 +552,6 @@
               路線を選択
             </button>
             <button
-              id="btn-extend-line-start"
-              onclick="beginLineExtension()"
-              disabled
-              style="display: none"
-            >
-              🔄 延長を開始
-            </button>
-            <button
               id="btn-extend-line-confirm"
               onclick="confirmLineExtension()"
               disabled
@@ -697,8 +689,8 @@
             lineId: null,
             lineData: null,
             isExtendStart: null, // true: 始点から延長, false: 終点から延長
-            startTerminal: null,
-            endTerminal: null,
+            startTerminal: null, // 既存路線の端のターミナルオブジェクト
+            extensionNodes: [],  // 追加する中間/終点ターミナルオブジェクトのリスト
             transientPolyline: null,
         },
 
@@ -718,8 +710,6 @@
             data.vehicles !== undefined ? data.vehicles : this.vehicles;
 
           if (data.stations || data.airports) this.drawTerminals(data.stations, data.airports);
-          // allLinesはlineBuilt/lineUpdatedイベントで更新されるため、initialState以外では不要
-          // if (data.allLines) this.drawLines(data.allLines); 
 
           this.updateFinancialUI();
         },
@@ -1499,16 +1489,25 @@
       function updateConstructionInfo(trackType) {
           const infoDiv = document.getElementById("construction-info");
           
-          let coords;
+          let coords = [];
           
           if (Game.mode === 'extend-line' && Game.extendLine.lineId) {
-              if (!Game.extendLine.endTerminal) {
+              if (Game.extendLine.extensionNodes.length === 0) {
                   infoDiv.style.display = 'none';
+                  currentConstructionCost = 0;
+                  currentConstructionDistance = 0;
                   return;
               }
-              const startCoord = [Game.extendLine.startTerminal.latlng.lat, Game.extendLine.startTerminal.latlng.lng];
-              const endCoord = [Game.extendLine.endTerminal.latlng.lat, Game.extendLine.endTerminal.latlng.lng];
-              coords = [startCoord, endCoord];
+              
+              // 延長開始点
+              let lastCoord = [Game.extendLine.startTerminal.latlng.lat, Game.extendLine.startTerminal.latlng.lng];
+              
+              // 延長ノード全体
+              coords.push(lastCoord);
+              Game.extendLine.extensionNodes.forEach(node => {
+                  coords.push([node.latlng.lat, node.latlng.lng]);
+              });
+              
           } else {
               if (lineCandidateNodes.length < 2) {
                   infoDiv.style.display = 'none';
@@ -1531,6 +1530,11 @@
                   
                   const terrainPercent = ((result.avgTerrainMultiplier - 1) * 100).toFixed(1);
                   document.getElementById("construction-terrain").textContent = `${terrainPercent}%`;
+                  
+                  // 延長モードの場合、コスト計算が完了したら確定ボタンを有効化
+                  if (Game.mode === 'extend-line' && Game.extendLine.extensionNodes.length > 0) {
+                      document.getElementById('btn-extend-line-confirm').disabled = false;
+                  }
               }
           });
       }
@@ -1637,11 +1641,8 @@
               return;
           }
           
-          // 既に選択済みの場合は何もしない
-          if (Game.extendLine.lineId === lineData.id) return;
-          
-          // 既存のハイライトを解除
-          cancelLineExtension();
+          // 既存のハイライトを解除し、状態をリセット
+          resetExtendLineState();
           
           Game.extendLine.lineId = lineData.id;
           Game.extendLine.lineData = lineData;
@@ -1674,10 +1675,9 @@
           Game.extendLine.startTerminal = startTerminal;
           
           document.getElementById('extend-line-hint').textContent = 
-              `路線 L${lineData.id} (${lineData.trackType}) を${isExtendStart ? '始点' : '終点'}から延長します。新しい終点ターミナルをクリックしてください。`;
+              `路線 L${lineData.id} (${lineData.trackType}) を${isExtendStart ? '始点' : '終点'}から延長します。次のターミナルをクリックしてください。`;
           
           document.getElementById('btn-extend-line-select').classList.add('active');
-          document.getElementById('btn-extend-line-confirm').disabled = true;
           document.getElementById('btn-extend-line-cancel').disabled = false;
           
           // 既存の路線ポリラインをハイライト
@@ -1687,7 +1687,7 @@
       }
 
       function handleExtendNodeClick(terminal) {
-          if (!Game.extendLine.lineId) {
+          if (Game.mode !== 'extend-line' || !Game.extendLine.lineId) {
               socket.emit('error', '先に延長対象の路線を選択してください。');
               return;
           }
@@ -1695,6 +1695,12 @@
           // 延長開始ターミナルと同じ場所は選択不可
           if (terminal.id === Game.extendLine.startTerminal.id) {
               socket.emit('error', '延長開始点と同じターミナルは選択できません。');
+              return;
+          }
+          
+          // 既に選択されたノードは選択不可
+          if (Game.extendLine.extensionNodes.some(node => node.id === terminal.id)) {
+              socket.emit('error', 'このターミナルは既に延長ノードとして選択されています。');
               return;
           }
           
@@ -1711,55 +1717,65 @@
           
           // 権限チェック
           if (terminal.ownerId !== Game.userId && terminal.ownerId !== 'ADMIN_SHARED') {
-              socket.emit('error', '他プレイヤーの施設には延長できません。');
+              socket.emit('error', '他プレイヤーの施設は延長ノードとして使用できません。');
               return;
           }
 
-          Game.extendLine.endTerminal = terminal;
+          Game.extendLine.extensionNodes.push(terminal);
           
           // 仮ポリラインの描画
-          const startCoord = [Game.extendLine.startTerminal.latlng.lat, Game.extendLine.startTerminal.latlng.lng];
-          const endCoord = [terminal.latlng.lat, terminal.latlng.lng];
+          drawTransientExtension();
           
-          deleteTransientExtension();
+          document.getElementById('extend-line-hint').textContent = 
+              `ノード数: ${Game.extendLine.extensionNodes.length}。次のターミナルをクリックするか、確定してください。`;
+          
+          document.getElementById('btn-extend-line-confirm').disabled = false;
+          document.getElementById('btn-extend-line-delete').disabled = false;
+      }
+      
+      function drawTransientExtension() {
+          const lineData = Game.extendLine.lineData;
+          const isAirRoute = lineData.trackType === 'air';
+          
+          // 既存路線の端点
+          const startCoord = [Game.extendLine.startTerminal.latlng.lat, Game.extendLine.startTerminal.latlng.lng];
+          
+          // 延長ノードの座標リスト
+          const extensionCoords = Game.extendLine.extensionNodes.map(node => [node.latlng.lat, node.latlng.lng]);
+          
+          const fullCoords = [startCoord, ...extensionCoords];
           
           const color = isAirRoute ? '#007bff' : '#FF0000';
           const weight = isAirRoute ? 3 : 10;
           
-          Game.extendLine.transientPolyline = L.polyline([startCoord, endCoord], {
+          if (Game.extendLine.transientPolyline) {
+              map.removeLayer(Game.extendLine.transientPolyline);
+          }
+          
+          Game.extendLine.transientPolyline = L.polyline(fullCoords, {
               color: color,
               weight: weight,
               opacity: 0.7,
               dashArray: '1, 5',
           }).addTo(map);
           
-          updateConstructionInfo(Game.extendLine.lineData.trackType);
-          
-          document.getElementById('extend-line-hint').textContent = 
-              `${Game.extendLine.startTerminal.name} から ${terminal.name} へ延長します。`;
-          document.getElementById('btn-extend-line-confirm').disabled = false;
-          document.getElementById('btn-extend-line-delete').disabled = false;
-      }
-      
-      window.beginLineExtension = () => {
-          // 路線選択後にこのボタンは非表示になるため、この関数は使用しない。
-          // 路線選択時に自動的に延長ステップに移行する。
+          updateConstructionInfo(lineData.trackType);
       }
       
       window.confirmLineExtension = () => {
-          if (!Game.extendLine.lineId || !Game.extendLine.endTerminal || currentConstructionCost === 0) {
+          if (!Game.extendLine.lineId || Game.extendLine.extensionNodes.length === 0 || currentConstructionCost === 0) {
               socket.emit('error', '延長する区間が設定されていません。');
               return;
           }
           
           const lineId = Game.extendLine.lineId;
-          const newTerminalCoord = [Game.extendLine.endTerminal.latlng.lat, Game.extendLine.endTerminal.latlng.lng];
+          const newTerminalCoords = Game.extendLine.extensionNodes.map(node => [node.latlng.lat, node.latlng.lng]);
           const isExtendStart = Game.extendLine.isExtendStart;
           
           if (confirm(`路線 L${lineId} を延長しますか？ 費用: ¥${currentConstructionCost.toLocaleString()}`)) {
               socket.emit('extendLine', {
                   lineId: lineId,
-                  newTerminalCoords: [newTerminalCoord],
+                  newTerminalCoords: newTerminalCoords,
                   isExtendStart: isExtendStart
               });
               cancelLineExtension();
@@ -1803,7 +1819,7 @@
               lineData: null,
               isExtendStart: null,
               startTerminal: null,
-              endTerminal: null,
+              extensionNodes: [],
               transientPolyline: null,
           };
           
@@ -1821,7 +1837,8 @@
               map.removeLayer(Game.extendLine.transientPolyline);
               Game.extendLine.transientPolyline = null;
           }
-          Game.extendLine.endTerminal = null;
+          Game.extendLine.extensionNodes = [];
+          
           document.getElementById('btn-extend-line-confirm').disabled = true;
           document.getElementById('btn-extend-line-delete').disabled = true;
           
@@ -1829,68 +1846,10 @@
           if (lineData) {
               const direction = Game.extendLine.isExtendStart ? '始点' : '終点';
               document.getElementById('extend-line-hint').textContent = 
-                  `路線 L${lineData.id} を${direction}から延長します。新しい終点ターミナルをクリックしてください。`;
+                  `路線 L${lineData.id} を${direction}から延長します。次のターミナルをクリックしてください。`;
           }
           updateConstructionInfo(Game.extendLine.lineData ? Game.extendLine.lineData.trackType : 'single');
       }
-
-      window.upgradeStation = (stationId, newType) => {
-        if (!socket) return alert("サーバーに接続されていません。");
-        
-        const station = Game.stations.find(s => s.id === stationId);
-        if (!station) return;
-
-        let cost = 0;
-        const currentType = station.type;
-
-        if (newType === 'Medium' && currentType === 'Small') {
-            cost = 50000000; 
-        } else if (newType === 'Large' && currentType === 'Small') {
-            cost = 150000000; 
-        } else if (newType === 'Large' && currentType === 'Medium') {
-            cost = 100000000; 
-        } else {
-            return; 
-        }
-
-        if (confirm(`${station.name} を ${newType} 駅にアップグレードしますか？ (費用: ¥${cost.toLocaleString()})`)) {
-            socket.emit("upgradeStation", { stationId: stationId, newType: newType, cost: cost });
-        }
-      };
-      
-      window.renameTerminalClient = (terminalId, isAirport) => {
-        if (!socket) return alert("サーバーに接続されていません。");
-        
-        const input = document.getElementById(`rename-input-${terminalId}`);
-        const newName = input ? input.value.trim() : null;
-        
-        if (!newName || newName.length < 2 || newName.length > 20) {
-            return alert("名称は2文字以上20文字以内で入力してください。");
-        }
-
-        socket.emit("renameTerminal", { terminalId: terminalId, newName: newName, isAirport: isAirport });
-      };
-      
-      window.requestLoan = () => {
-          if (!socket) return alert("サーバーに接続されていません。");
-          
-          const amountM = parseFloat(document.getElementById('loan-amount-input').value);
-          const termMonths = parseInt(document.getElementById('loan-term-input').value);
-          
-          if (isNaN(amountM) || amountM <= 0 || isNaN(termMonths) || termMonths < 6) {
-              return alert("借入額は正の値で、期間は6ヶ月以上に設定してください。");
-          }
-          
-          const amount = Math.round(amountM * 1000000);
-          
-          if (amount > Game.money * 10) { 
-              if (!confirm(`借入額 ¥${amount.toLocaleString()} は現在の資金の10倍以上です。本当に借りますか？`)) {
-                  return;
-              }
-          }
-          
-          socket.emit('requestLoan', { amount: amount, termMonths: termMonths });
-      };
 
       function handleLineDismantle(e) {
         if (Game.mode !== "dismantle-line" || !socket) return;
@@ -1952,18 +1911,15 @@
       function toggleConstructionMode(newMode) {
         const mapContainer = map.getContainer();
 
-        // 路線延長モードのUI表示/非表示を制御
         const isLineMode = newMode === "track" || newMode === "air-route";
         const isExtendMode = newMode === "extend-line";
-        document.getElementById("extend-line-panel").style.display = isLineMode || isExtendMode || Game.extendLine.lineId ? 'block' : 'none';
         
-        // 路線延長モードをキャンセル
+        // 路線モード、航空路線モード、または延長モードのいずれかでパネルを表示
+        document.getElementById("extend-line-panel").style.display = isLineMode || isExtendMode ? 'block' : 'none';
+        
+        // 延長モードをキャンセル
         if (!isExtendMode) {
             cancelLineExtension();
-        } else {
-            // 延長モード選択ボタンをアクティブ化し、他のボタンをリセット
-            document.getElementById('btn-extend-line-select').classList.add('active');
-            document.getElementById('btn-extend-line-cancel').disabled = false;
         }
 
         L.DomUtil.removeClass(mapContainer, "station-mode");
@@ -1984,6 +1940,7 @@
         document
           .querySelectorAll(".rail-ui-control button")
           .forEach((btn) => {
+              // 延長パネル内のボタンはここでは制御しない
               if (btn.id !== 'btn-extend-line-select' && btn.id !== 'btn-extend-line-confirm' && btn.id !== 'btn-extend-line-cancel' && btn.id !== 'btn-extend-line-delete') {
                   btn.classList.remove("active");
               }
@@ -2021,7 +1978,8 @@
         } else if (newMode === "extend-line") {
             // 延長モードでは、ターミナルクリックを有効にするために一時的にtrack-modeのクラスを付与
             L.DomUtil.addClass(mapContainer, "track-mode");
-            document.getElementById('extend-line-panel').style.display = 'block';
+            document.getElementById('btn-extend-line-select').classList.add('active');
+            document.getElementById('btn-extend-line-cancel').disabled = false;
         } else {
           // アイドルの場合、駅モードボタンをアクティブにする (デフォルト)
           document.getElementById("btn-station-mode").classList.add("active"); 
@@ -2177,6 +2135,12 @@
       window.finalizeAirRoute = finalizeAirRoute;
       window.Game = Game;
       window.handleTerminalClick = handleTerminalClick;
+      window.confirmLineExtension = confirmLineExtension;
+      window.cancelLineExtension = cancelLineExtension;
+      window.deleteTransientExtension = deleteTransientExtension;
+      window.upgradeStation = upgradeStation;
+      window.renameTerminalClient = renameTerminalClient;
+      window.requestLoan = requestLoan;
 
       document.addEventListener("DOMContentLoaded", () => {
         map = L.map("map", {
