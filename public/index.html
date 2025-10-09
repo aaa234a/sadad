@@ -1767,7 +1767,27 @@
           document.getElementById('btn-extend-line-confirm').disabled = false;
           document.getElementById('btn-extend-line-delete').disabled = false;
       }
-      
+            
+      window.requestLoan = () => {
+          if (!socket) return alert("サーバーに接続されていません。");
+          
+          const amountM = parseFloat(document.getElementById('loan-amount-input').value);
+          const termMonths = parseInt(document.getElementById('loan-term-input').value);
+          
+          if (isNaN(amountM) || amountM <= 0 || isNaN(termMonths) || termMonths < 6) {
+              return alert("借入額は正の値で、期間は6ヶ月以上に設定してください。");
+          }
+          
+          const amount = Math.round(amountM * 1000000);
+          
+          if (amount > Game.money * 10) { 
+              if (!confirm(`借入額 ¥${amount.toLocaleString()} は現在の資金の10倍以上です。本当に借りますか？`)) {
+                  return;
+              }
+          }
+          
+          socket.emit('requestLoan', { amount: amount, termMonths: termMonths });
+      };
       function drawTransientExtension() {
           const lineData = Game.extendLine.lineData;
           const isAirRoute = lineData.trackType === 'air';
