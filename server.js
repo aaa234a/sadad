@@ -35,6 +35,78 @@ function isAdminOwnedTerminal(terminal) {
     return isAdminUser(terminal.ownerId);
 }
 
+function normalizeCoordinateTuple(tuple) {
+    if (!Array.isArray(tuple) || tuple.length < 2) return null;
+    const lat = Number(tuple[0]);
+    const lng = Number(tuple[1]);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+    return [lat, lng];
+}
+
+function coordinatesAlmostEqual(a, b, tolerance = 1e-5) {
+    if (!a || !b) return false;
+    return Math.abs(a[0] - b[0]) <= tolerance && Math.abs(a[1] - b[1]) <= tolerance;
+}
+
+function sanitizeRoutePoints(points) {
+    if (!Array.isArray(points)) return [];
+    const normalized = [];
+    points.forEach((point) => {
+        const normalizedTuple = normalizeCoordinateTuple(point);
+        if (!normalizedTuple) return;
+        if (
+            normalized.length === 0 ||
+            !coordinatesAlmostEqual(normalized[normalized.length - 1], normalizedTuple)
+        ) {
+            normalized.push(normalizedTuple);
+        }
+    });
+    return normalized;
+}
+
+function computeRouteStats(routePoints, trackType) {
+    const sanitized = sanitizeRoutePoints(routePoints);
+    if (sanitized.length < 2) {
+        return { route: sanitized, totalCost: 0, totalLengthKm: 0 };
+    }
+    let totalCost = 0;
+    let totalLengthKm = 0;
+    for (let i = 1; i < sanitized.length; i += 1) {
+        const { cost, lengthKm } = calculateConstructionCost(
+            sanitized[i - 1],
+            sanitized[i],
+            trackType
+        );
+        totalCost += cost;
+        totalLengthKm += lengthKm;
+    }
+    return { route: sanitized, totalCost, totalLengthKm };
+}
+
+function getTerminalById(terminalId, isAirport) {
+    if (!Number.isFinite(terminalId)) return null;
+    if (isAirport) {
+        return ServerGame.globalStats.airports.find((airport) => airport.id === terminalId) || null;
+    }
+    return ServerGame.globalStats.stations.find((station) => station.id === terminalId) || null;
+}
+
+function findTerminalByCoordinate(lat, lng, tolerance = 1e-5) {
+    const candidate = ServerGame.globalStats.stations.find((station) =>
+        coordinatesAlmostEqual([station.latlng[0], station.latlng[1]], [lat, lng], tolerance)
+    );
+    if (candidate) {
+        return { terminal: candidate, isAirport: false };
+    }
+    const airportCandidate = ServerGame.globalStats.airports.find((airport) =>
+        coordinatesAlmostEqual([airport.latlng[0], airport.latlng[1]], [lat, lng], tolerance)
+    );
+    if (airportCandidate) {
+        return { terminal: airportCandidate, isAirport: true };
+    }
+    return null;
+}
+
 // =================================================================
 // 0. データベース接続とMongooseスキーマ定義
 // =================================================================
