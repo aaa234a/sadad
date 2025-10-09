@@ -64,6 +64,22 @@
         overflow-y: auto; 
       }
 
+      #extend-line-panel {
+        margin-top: 10px;
+        padding: 8px;
+        border: 1px dashed #666;
+        background-color: rgba(240, 240, 240, 0.9);
+        display: none;
+        text-align: left;
+        font-size: 0.9em;
+      }
+
+      .line-mode-hint {
+        font-size: 0.85em;
+        color: #444;
+        margin: 4px 0 8px;
+      }
+
       /* ニュースフィードパネル (左下) */
       #news-feed-panel {
         bottom: 10px;
@@ -481,6 +497,23 @@
           <hr
             style="margin: 10px 0; border: none; border-top: 1px solid #ccc"
           />
+
+          <div id="extend-line-panel">
+            <strong>路線延長モード</strong>
+            <p class="line-mode-hint" id="extend-line-hint">既存路線を選択してください。</p>
+            <button id="btn-extend-line-start" onclick="beginLineExtension()" disabled>
+              🔄 延長を開始
+            </button>
+            <button id="btn-extend-line-confirm" onclick="confirmLineExtension()" disabled>
+              ✅ 延長を確定
+            </button>
+            <button id="btn-extend-line-cancel" onclick="cancelLineExtension()" disabled>
+              ✖ 延長をキャンセル
+            </button>
+            <button id="btn-extend-line-delete" onclick="deleteTransientExtension()" disabled>
+              🧹 仮延長を削除
+            </button>
+          </div>
 
           <label style="display: block; margin-bottom: 5px; font-weight: bold"
             >線路/路線タイプ:</label
