@@ -1444,7 +1444,19 @@
           socket.emit("dismantleTerminal", { terminalId: terminal.id, isAirport: terminal.isAirport });
         }
       }
+      
+      window.renameTerminalClient = (terminalId, isAirport) => {
+        if (!socket) return alert("サーバーに接続されていません。");
+        
+        const input = document.getElementById(`rename-input-${terminalId}`);
+        const newName = input ? input.value.trim() : null;
+        
+        if (!newName || newName.length < 2 || newName.length > 20) {
+            return alert("名称は2文字以上20文字以内で入力してください。");
+        }
 
+        socket.emit("renameTerminal", { terminalId: terminalId, newName: newName, isAirport: isAirport });
+      };
       function handleTerminalClick(terminal) {
         if (Game.mode === "track") {
             if (terminal.isAirport) {
