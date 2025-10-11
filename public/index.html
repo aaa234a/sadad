@@ -289,7 +289,8 @@
           display: flex;
           flex-direction: column;
           align-items: center;
-          padding-bottom: 260px;
+          /* マップの下にUIを配置するためのスペース */
+          padding-bottom: 260px; 
         }
 
         #map {
@@ -585,8 +586,20 @@
             <option value="tram">路面電車専用 (x0.8)</option>
             <option value="air">航空路線 (建設費安)</option>
           </select>
+
+          <!-- 運行計画 & 車両管理パネル -->
+          <hr style="margin: 10px 0; border: none; border-top: 2px solid #333" />
+          <h3>⚙️ 運行計画 & 車両管理</h3>
+          <div id="line-schedule-management" style="margin-bottom: 15px;">
+              <p>ターミナルをクリックすると、その路線に運行計画を設定できます。</p>
+          </div>
+          
+          <div id="vehicle-management-panel" style="margin-top: 10px; max-height: 200px; overflow-y: auto; padding: 5px; border: 1px solid #ddd;">
+              <!-- 車両詳細と修理ボタンがここに入る -->
+          </div>
+          
+          <div id="vehicle-buy-container"></div>
         </div>
-        <div id="vehicle-buy-container"></div>
       </div>
     </div>
 
@@ -702,12 +715,20 @@
               : this.totalConstructionCost;
           this.currentLoan = data.currentLoan !== undefined ? data.currentLoan : this.currentLoan;
           this.monthlyRepayment = data.monthlyRepayment !== undefined ? data.monthlyRepayment : this.monthlyRepayment;
-          this.establishedLines =
-            data.establishedLines !== undefined
-              ? data.establishedLines
-              : this.establishedLines;
-          this.vehicles =
-            data.vehicles !== undefined ? data.vehicles : this.vehicles;
+          
+          if (data.establishedLines !== undefined) {
+              this.establishedLines = data.establishedLines;
+              // 路線情報が変わったら運行計画UI更新のトリガーが必要
+              if (this.lastSelectedLineId) {
+                  const line = this.establishedLines.find(l => l.id === this.lastSelectedLineId);
+                  if (line) updateLineScheduleUI(line);
+              }
+          }
+          
+          if (data.vehicles !== undefined) {
+              this.vehicles = data.vehicles;
+              updateVehicleBuyUI();
+          }
 
           if (data.stations || data.airports) this.drawTerminals(data.stations, data.airports);
 
@@ -885,6 +906,13 @@
                     if (Game.mode === 'extend-line') {
                         handleLineSelectionForExtension(line, e);
                         L.DomEvent.stopPropagation(e);
+                    } else if (Game.mode === 'dismantle-line') {
+                        handleLineDismantle(e);
+                        L.DomEvent.stopPropagation(e);
+                    } else {
+                        // 運行計画設定のために路線をクリックできるようにする
+                        Game.lastSelectedLineId = line.id;
+                        updateLineScheduleUI(line);
                     }
                 });
             }
@@ -1166,7 +1194,6 @@
             Game.drawLines(data.allLines);
           }
           
-          updateVehicleBuyUI();
           Game._lastLineCount = data.establishedLines ? data.establishedLines.length : 0;
           Game._lastVehicleCount = data.vehicles ? data.vehicles.length : 0;
         });
@@ -1339,13 +1366,15 @@
             ? `transform: translate(-50%, -50%) rotate(${rotationAngle}deg);`
             : `transform: translate(-50%, -50%);`;
 
+          const healthColor = vehicle.health <= 0 ? 'red' : (vehicle.health < 50 ? 'orange' : vehicle.color);
+
           const markerIcon = L.divIcon({
             className: iconClass,
-            style: `background-color: ${vehicle.color}; border-color: ${
+            style: `background-color: ${healthColor}; border-color: ${
               vehicle.owner === Game.userId ? "yellow" : "white"
             }; ${rotationStyle}`,
           });
-          const popupContent = `${isAir ? '✈️' : '🚆'} 車両 #${vehicle.id} (Owner: ${vehicle.owner}) - Status: ${vehicle.status || 'Running'} (編成数: ${vehicle.formationSize || 1})`;
+          const popupContent = `${isAir ? '✈️' : '🚆'} 車両 #${vehicle.id} (Owner: ${vehicle.owner}) - Status: ${vehicle.status || 'Running'} (編成数: ${vehicle.formationSize || 1})<br>健全性: ${vehicle.health}%`;
 
           longitudeOffsets.forEach((offset, index) => {
             const offsetLatLng = L.latLng(latlng.lat, latlng.lng + offset);
@@ -1374,7 +1403,7 @@
                 
                 const newIcon = L.divIcon({
                     className: iconClass,
-                    style: `background-color: ${vehicle.color}; border-color: ${
+                    style: `background-color: ${healthColor}; border-color: ${
                         vehicle.owner === Game.userId ? "yellow" : "white"
                     }; ${rotationStyle}`, 
                 });
@@ -1470,6 +1499,17 @@
             handleTerminalDismantle(terminal);
         } else if (Game.mode === "extend-line" && Game.extendLine.lineId) {
             handleExtendNodeClick(terminal);
+        }
+        
+        // 運行計画設定UIの更新
+        if (terminal.ownerId === Game.userId && terminal.lineConnections && terminal.lineConnections.length > 0) {
+            // ターミナルが自分の路線に接続している場合、その路線の運行計画設定UIを表示
+            const lineId = terminal.lineConnections[0]; // 最初の接続路線を代表として表示
+            const line = Game.establishedLines.find(l => l.id === lineId);
+            if (line) {
+                Game.lastSelectedLineId = line.id;
+                updateLineScheduleUI(line);
+            }
         }
       }
             window.upgradeStation = (stationId, newType) => {
@@ -1697,6 +1737,7 @@
           const terminalList = Game.stations.concat(Game.airports);
           const startTerminalCoord = isExtendStart ? coords[0] : coords[coords.length - 1];
           
+          // 座標が完全に一致するターミナルを見つける
           const startTerminal = terminalList.find(t => 
               t.latlng.lat === startTerminalCoord[0] && t.latlng.lng === startTerminalCoord[1]
           );
@@ -2053,6 +2094,8 @@
 
         if (Game.establishedLines.length === 0) {
           container.innerHTML += `<p>路線/航空路線を建設すると車両/飛行機が購入できます。</p>`;
+          // 車両管理パネルも更新
+          document.getElementById("vehicle-management-panel").innerHTML = '<h4>車両一覧とメンテナンス</h4><p>車両がありません。</p>';
           return;
         }
 
@@ -2060,7 +2103,34 @@
           container.innerHTML += `<p>車両データをサーバーから取得中...</p>`;
           return;
         }
+        
+        // 車両管理パネルの更新
+        const vehicleManagementPanel = document.getElementById("vehicle-management-panel");
+        vehicleManagementPanel.innerHTML = '<h4>車両一覧とメンテナンス</h4>';
+        
+        if (Game.vehicles.length === 0) {
+            vehicleManagementPanel.innerHTML += '<p>車両がありません。</p>';
+        } else {
+            Game.vehicles.forEach(v => {
+                const line = Game.establishedLines.find(l => l.id === v.lineId);
+                const health = Math.round(v.health);
+                const isBroken = health <= 0;
+                const color = isBroken ? 'red' : (health < 50 ? 'orange' : 'green');
+                const status = isBroken ? '故障中' : (health < 50 ? '要修理' : '正常');
+                const repairCost = Math.round((100 - health) * 100000);
+                
+                vehicleManagementPanel.innerHTML += `
+                    <div style="border: 1px solid #ccc; padding: 5px; margin-bottom: 5px;">
+                        <p>#${v.id} (${v.data.name}, L${v.lineId})</p>
+                        <p>健全性: <span style="color: ${color}; font-weight: bold;">${health}% (${status})</span></p>
+                        ${health < 100 ? `<button onclick="repairVehicle(${v.id}, ${repairCost})" ${Game.money < repairCost ? 'disabled' : ''}>修理 (¥${repairCost.toLocaleString()})</button>` : ''}
+                    </div>
+                `;
+            });
+        }
 
+
+        // 車両購入UIの更新
         const sortedVehicleKeys = Object.keys(VehicleData).sort(
           (a, b) =>
             VehicleData[a].purchaseMultiplier -
@@ -2138,6 +2208,13 @@
 
         socket.emit("buyVehicle", { lineId: lineId, vehicleKey: vehicleKey, formationSize: formationSize });
       };
+      
+      window.repairVehicle = (vehicleId, repairCost) => {
+          if (!socket) return;
+          if (confirm(`車両 #${vehicleId} を修理しますか？ 費用: ¥${repairCost.toLocaleString()}`)) {
+              socket.emit('repairVehicle', { vehicleId: vehicleId });
+          }
+      };
 
       window.toggleAccordion = (contentId) => {
         const content = document.getElementById(contentId);
@@ -2156,6 +2233,59 @@
         }
       };
       
+      // --- 運行計画設定ロジック ---
+      
+      function updateLineScheduleUI(line) {
+          const container = document.getElementById('line-schedule-management');
+          
+          // 路線に接続されているターミナルを取得
+          const allTerminals = Game.stations.concat(Game.airports);
+          const lineTerminals = line.coords.map(coord => 
+              allTerminals.find(t => t.latlng.lat === coord[0] && t.latlng.lng === coord[1])
+          ).filter(t => t);
+          
+          const terminalOptions = Array.from(new Set(lineTerminals.map(t => t.id)))
+              .map(id => lineTerminals.find(t => t.id === id));
+          
+          // 現在のスケジュールをターミナル名で表示
+          const currentScheduleNames = (line.schedule || [])
+              .map(id => terminalOptions.find(t => t.id === id)?.name || `ID:${id}`)
+              .join(' → ');
+              
+          container.innerHTML = `
+              <h4>路線 L${line.id} (${line.trackType}) の運行計画</h4>
+              <p><b>路線上のターミナルID:</b> ${terminalOptions.map(t => t.id).join(', ')}</p>
+              <p><b>現在の計画:</b> ${currentScheduleNames || 'なし (単純折り返し)'}</p>
+              <p>ターミナルIDをカンマ区切りで入力してください (例: 1, 3, 5, 3, 1)</p>
+              <input type="text" id="schedule-input-${line.id}" value="${line.schedule.join(', ')}" placeholder="ターミナルID" style="width: 100%; margin-bottom: 5px;">
+              <button onclick="setLineSchedule(${line.id})">運行計画を設定</button>
+              <button onclick="clearLineSchedule(${line.id})" style="background-color: #f8d7da;">計画をクリア</button>
+          `;
+      }
+
+      window.setLineSchedule = (lineId) => {
+          if (!socket) return;
+          const input = document.getElementById(`schedule-input-${lineId}`);
+          const rawIds = input.value.split(',').map(s => s.trim()).filter(s => s !== '');
+          const terminalIds = rawIds.map(id => parseInt(id, 10)).filter(id => Number.isFinite(id));
+          
+          if (terminalIds.length < 2) {
+              socket.emit('error', '運行計画には2つ以上のターミナルIDが必要です。');
+              return;
+          }
+          
+          socket.emit('setLineSchedule', { lineId: lineId, terminalIds: terminalIds });
+      };
+
+      window.clearLineSchedule = (lineId) => {
+          if (!socket) return;
+          if (confirm(`路線 L${lineId} の運行計画をクリアし、単純折り返しに戻しますか？`)) {
+              socket.emit('setLineSchedule', { lineId: lineId, terminalIds: [] });
+          }
+      };
+      
+      // --- チャットロジック ---
+
       function appendChatMessage(userId, message, timestamp) {
         const chatMessages = document.getElementById('chat-messages');
         const messageElement = document.createElement('p');
