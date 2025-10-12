@@ -1348,7 +1348,15 @@
           });
           const popupContent = `${isAir ? '✈️' : '🚆'} 車両 #${vehicle.id} (Owner: ${vehicle.owner}) - Status: ${vehicle.status || 'Running'} (編成数: ${vehicle.formationSize || 1})`;
 
+
           longitudeOffsets.forEach((offset, index) => {
+            
+            // FIX: Check if latlng is null or undefined
+            if (!latlng) {
+                console.warn("Skipping marker operation: latlng is null or undefined.");
+                return; // Skip this iteration if the coordinates are missing
+            }
+            
             const offsetLatLng = L.latLng(latlng.lat, latlng.lng + offset);
             let currentMarkerData;
 
@@ -1373,6 +1381,9 @@
                 currentMarkerData.setLatLng(offsetLatLng);
                 currentMarkerData.setPopupContent(popupContent);
                 
+                // Note: rotationStyle was missing in the original snippet but is needed for the icon creation
+                const rotationStyle = vehicle.rotation !== undefined ? `transform: rotate(${vehicle.rotation}deg);` : ''; 
+
                 const newIcon = L.divIcon({
                     className: iconClass,
                     style: `background-color: ${vehicle.color}; border-color: ${
