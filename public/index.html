@@ -1086,7 +1086,8 @@
             const airportIcon = L.divIcon({
                 className: iconClass,
                 html: '✈️',
-                style: `background-color: ${this.ownerId === Game.userId ? '' : '#FF0000};`,
+                style: `background-color: ${this.ownerId === Game.userId ? '' : '#FF0000'};`,
+
             });
             
             const popupContent = this.generatePopupContent();
