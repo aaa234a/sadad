@@ -1373,98 +1373,126 @@
         });
       }
 
-      function updateVehiclePositions(vehiclePositions) {
-        const longitudeOffsets = [-360, 0, 360];
-        const existingVehicleIds = new Set(Object.keys(Game.allVehicleMarkers));
+function updateVehiclePositions(vehiclePositions) {
+  // 経度をオフセットして、地図を横方向に繋げるための設定（例: -360, 0, +360）
+  const longitudeOffsets = [-360, 0, 360];
+  const existingVehicleIds = new Set(Object.keys(Game.allVehicleMarkers));
 
-        vehiclePositions.forEach((vehicle) => {
-          if (!Array.isArray(vehicle.latlng) || vehicle.latlng.length !== 2) {
-              console.warn(`車両ID ${vehicle.id} の位置情報が不正です:`, vehicle.latlng);
-              return; 
-          }
+  // 各車両データを処理
+  vehiclePositions.forEach((vehicle) => {
+    // ======= 安全チェック ==========
+    if (
+      !Array.isArray(vehicle.latlng) ||
+      vehicle.latlng.length !== 2 ||
+      vehicle.latlng[0] == null ||
+      vehicle.latlng[1] == null
+    ) {
+      console.warn(`車両ID ${vehicle.id} の位置情報が不正です:`, vehicle.latlng);
+      return;
+    }
+    // ================================
 
-          const latlng = L.latLng(vehicle.latlng[0], vehicle.latlng[1]);
-          existingVehicleIds.delete(vehicle.id.toString());
+    const latlng = L.latLng(vehicle.latlng[0], vehicle.latlng[1]);
+    existingVehicleIds.delete(vehicle.id.toString());
 
-          if (!Game.allVehicleMarkers[vehicle.id]) {
-            Game.allVehicleMarkers[vehicle.id] = { original: null, copies: [] };
-          }
+    // 車両ごとのマーカー管理オブジェクトを確保
+    if (!Game.allVehicleMarkers[vehicle.id]) {
+      Game.allVehicleMarkers[vehicle.id] = { original: null, copies: [] };
+    }
 
-          const markerData = Game.allVehicleMarkers[vehicle.id];
-          
-          const isAir = vehicle.category === 'air';
-          const iconClass = isAir ? "airplane-icon" : "train-icon";
-          
-          const rotationAngle = vehicle.rotation !== undefined ? vehicle.rotation : 0;
-          
-          const rotationStyle = isAir 
-            ? `transform: translate(-50%, -50%) rotate(${rotationAngle}deg);`
-            : `transform: translate(-50%, -50%);`;
+    const markerData = Game.allVehicleMarkers[vehicle.id];
 
-          const markerIcon = L.divIcon({
-            className: iconClass,
-            style: `background-color: ${vehicle.color}; border-color: ${
-              vehicle.owner === Game.userId ? "yellow" : "white"
-            }; ${rotationStyle}`,
-          });
-          const popupContent = `${isAir ? '✈️' : '🚆'} 車両 #${vehicle.id} (Owner: ${vehicle.owner}) - Status: ${vehicle.status || 'Running'} (編成数: ${vehicle.formationSize || 1})`;
+    // 車両の種類によってアイコンを分ける
+    const isAir = vehicle.category === "air";
+    const iconClass = isAir ? "airplane-icon" : "train-icon";
 
+    // 回転角度（飛行機など）
+    const rotationAngle = vehicle.rotation !== undefined ? vehicle.rotation : 0;
 
-          longitudeOffsets.forEach((offset, index) => {
-            
-            // FIX: Check if latlng is null or undefined
-            if (!latlng) {
-                console.warn("Skipping marker operation: latlng is null or undefined.");
-                return; // Skip this iteration if the coordinates are missing
-            }
-            
-            const offsetLatLng = L.latLng(latlng.lat, latlng.lng + offset);
-            let currentMarkerData;
+    // 中心位置と回転を両方反映する CSS
+    const rotationStyle = `transform: translate(-50%, -50%)${
+      rotationAngle ? ` rotate(${rotationAngle}deg)` : ""
+    };`;
 
-            if (index === 1) { 
-              currentMarkerData = markerData.original;
-            } else { 
-              const copyIndex = index === 0 ? 0 : 1;
-              currentMarkerData = markerData.copies[copyIndex];
-            }
+    // 表示アイコン作成
+    const markerIcon = L.divIcon({
+      className: iconClass,
+      style: `background-color: ${vehicle.color}; border-color: ${
+        vehicle.owner === Game.userId ? "yellow" : "white"
+      }; ${rotationStyle}`,
+    });
 
-            if (!currentMarkerData) {
-                marker = L.marker(offsetLatLng, { icon: markerIcon }).addTo(map);
-                marker.bindPopup(popupContent);
-                
-                if (index === 1) {
-                    markerData.original = marker;
-                } else {
-                    const copyIndex = index === 0 ? 0 : 1;
-                    markerData.copies[copyIndex] = marker;
-                }
-            } else {
-                currentMarkerData.setLatLng(offsetLatLng);
-                currentMarkerData.setPopupContent(popupContent);
-                
-                // Note: rotationStyle was missing in the original snippet but is needed for the icon creation
-                const rotationStyle = vehicle.rotation !== undefined ? `transform: rotate(${vehicle.rotation}deg);` : ''; 
+    // ポップアップの中身
+    const popupContent = `${
+      isAir ? "✈️" : "🚆"
+    } 車両 #${vehicle.id} (Owner: ${vehicle.owner}) - Status: ${
+      vehicle.status || "Running"
+    } (編成数: ${vehicle.formationSize || 1})`;
 
-                const newIcon = L.divIcon({
-                    className: iconClass,
-                    style: `background-color: ${vehicle.color}; border-color: ${
-                        vehicle.owner === Game.userId ? "yellow" : "white"
-                    }; ${rotationStyle}`, 
-                });
-                currentMarkerData.setIcon(newIcon);
-            }
-          });
-        });
-
-        existingVehicleIds.forEach(vehicleId => {
-            const markerData = Game.allVehicleMarkers[vehicleId];
-            if (markerData.original) map.removeLayer(markerData.original);
-            markerData.copies.forEach(copy => {
-                if (copy) map.removeLayer(copy); 
-            });
-            delete Game.allVehicleMarkers[vehicleId];
-        });
+    // 3つの経度オフセット（-360, 0, +360）それぞれにマーカーを配置
+    longitudeOffsets.forEach((offset, index) => {
+      // 念のため latlng 再チェック（理論的には不要だが安全）
+      if (!latlng) {
+        console.warn(
+          `Skipping marker operation: latlng is null or undefined for vehicle ${vehicle.id}`
+        );
+        return;
       }
+
+      const offsetLatLng = L.latLng(latlng.lat, latlng.lng + offset);
+      let currentMarkerData;
+
+      if (index === 1) {
+        // 中央（オリジナル）
+        currentMarkerData = markerData.original;
+      } else {
+        // 左右のコピー（地球を繋げる用）
+        const copyIndex = index === 0 ? 0 : 1;
+        currentMarkerData = markerData.copies[copyIndex];
+      }
+
+      if (!currentMarkerData) {
+        // マーカーが存在しなければ新規追加
+        const marker = L.marker(offsetLatLng, { icon: markerIcon }).addTo(map);
+        marker.bindPopup(popupContent);
+
+        if (index === 1) {
+          markerData.original = marker;
+        } else {
+          const copyIndex = index === 0 ? 0 : 1;
+          markerData.copies[copyIndex] = marker;
+        }
+      } else {
+        // 既存マーカーを更新
+        currentMarkerData.setLatLng(offsetLatLng);
+        currentMarkerData.setPopupContent(popupContent);
+
+        const rotationStyle = `transform: translate(-50%, -50%)${
+          vehicle.rotation ? ` rotate(${vehicle.rotation}deg)` : ""
+        };`;
+
+        const newIcon = L.divIcon({
+          className: iconClass,
+          style: `background-color: ${vehicle.color}; border-color: ${
+            vehicle.owner === Game.userId ? "yellow" : "white"
+          }; ${rotationStyle}`,
+        });
+        currentMarkerData.setIcon(newIcon);
+      }
+    });
+  });
+
+  // 存在しなくなった車両のマーカーを削除
+  existingVehicleIds.forEach((vehicleId) => {
+    const markerData = Game.allVehicleMarkers[vehicleId];
+    if (markerData.original) map.removeLayer(markerData.original);
+    markerData.copies.forEach((copy) => {
+      if (copy) map.removeLayer(copy);
+    });
+    delete Game.allVehicleMarkers[vehicleId];
+  });
+}
+
 
       function updateRankingUI(ranking) {
         const list = document.getElementById("ranking-list");
