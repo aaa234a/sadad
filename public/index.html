@@ -238,6 +238,21 @@
         transform-origin: 50% 50%;
       }
 
+      /* 路線設定パネル内のスタイル調整 */
+      #line-config-panel label {
+          display: inline-block;
+          margin-top: 5px;
+          font-size: 0.9em;
+      }
+      #line-config-panel input[type="range"] {
+          margin-top: 0;
+      }
+      #line-config-panel button {
+          width: 100%;
+          padding: 5px;
+      }
+
+
       .leaflet-container.station-mode,
       .leaflet-container.airport-mode {
         cursor: crosshair;
@@ -586,6 +601,27 @@
             <option value="tram">路面電車専用 (x0.8)</option>
             <option value="air">航空路線 (建設費安)</option>
           </select>
+
+          <!-- 路線管理・設定パネル -->
+          <hr style="margin: 10px 0; border: none; border-top: 2px solid #333" />
+          <h3>⚙️ 路線管理・設定</h3>
+          <div id="line-management-container">
+              <!-- 路線リストがJSで挿入される -->
+          </div>
+          <div id="line-config-panel" style="display: none; border: 1px solid #007bff; padding: 10px; margin-top: 10px; text-align: left;">
+              <h4>路線 L<span id="config-line-id"></span> 設定</h4>
+              
+              <!-- 運賃設定 -->
+              <label for="fare-multiplier-input" style="font-weight: bold; display: block; margin-top: 10px;">運賃倍率 (<span id="current-fare-multiplier">1.00</span>倍):</label>
+              <input type="range" id="fare-multiplier-input" min="0.5" max="3.0" step="0.05" oninput="updateFareDisplay(this.value)" style="width: 100%;">
+              <button onclick="setLineFare()" style="margin-top: 5px;">運賃を適用</button>
+              
+              <!-- サービス設定 -->
+              <h5 style="margin-top: 15px; margin-bottom: 5px;">サービス提供 (人気度/維持費)</h5>
+              <div id="service-options-container">
+                  <!-- サービスチェックボックスがJSで挿入される -->
+              </div>
+          </div>
         </div>
         <div id="vehicle-buy-container"></div>
       </div>
@@ -662,6 +698,8 @@
       const AIRPORT_COST = 500000000;
       const VEHICLE_BASE_COST = 8000000;
       const AIRPLANE_BASE_COST = 50000000;
+      
+      let SERVICE_SETTINGS = {}; // サーバーからロードされる
 
       let VehicleData = {};
       let map;
@@ -713,6 +751,7 @@
           if (data.stations || data.airports) this.drawTerminals(data.stations, data.airports);
 
           this.updateFinancialUI();
+          this.updateLineManagementUI();
         },
 
         updateFinancialUI() {
@@ -1047,7 +1086,7 @@
             const airportIcon = L.divIcon({
                 className: iconClass,
                 html: '✈️',
-                style: `background-color: ${this.ownerId === Game.userId ? '' : '#FF0000'};`,
+                style: `background-color: ${this.ownerId === Game.userId ? '' : '#FF0000};`,
             });
             
             const popupContent = this.generatePopupContent();
@@ -1152,6 +1191,8 @@
         }
       }
 
+      let currentConfigLineId = null;
+
       function connectSocket(userId) {
         socket = io();
 
@@ -1161,6 +1202,7 @@
 
         socket.on("initialState", (data) => {
           VehicleData = data.vehicleData;
+          SERVICE_SETTINGS = data.serviceSettings || {}; // サービス設定をロード
           Game.updateStats(data);
           
           if (data.allLines) {
@@ -1243,21 +1285,37 @@
 
         socket.on("lineBuilt", (data) => {
           Game.drawLine(data);
+          // ユーザーのestablishedLinesはupdateUserStateで更新されるが、即時反映のため手動で追加
+          if (data.ownerId === Game.userId) {
+              Game.establishedLines.push(data);
+              Game.updateLineManagementUI();
+          }
         });
         
         socket.on("lineUpdated", (data) => {
-            // 既存の路線を削除
+            // 既存の路線を削除/再描画
             if (Game.allLines[data.id]) {
                 Game.allLines[data.id].forEach(p => map.removeLayer(p));
                 delete Game.allLines[data.id];
             }
-            // 新しい路線を描画
             Game.drawLine(data);
             
-            // ユーザーのestablishedLinesも更新
-            const lineIndex = Game.establishedLines.findIndex(l => l.id === data.id);
-            if (lineIndex !== -1) {
-                Game.establishedLines[lineIndex] = data;
+            // ユーザーのestablishedLinesを更新
+            const line = Game.establishedLines.find(l => l.id === data.id);
+            if (line) {
+                // 既存のプロパティを更新
+                Object.assign(line, data);
+
+                // 運賃とサービスを更新
+                if (data.fareMultiplier !== undefined) line.fareMultiplier = data.fareMultiplier;
+                if (data.services !== undefined) line.services = data.services;
+            }
+            
+            // UI更新
+            Game.updateLineManagementUI(); 
+            if (currentConfigLineId === data.id) {
+                // 設定パネルが開いている場合は再描画
+                showLineConfigPanel(data.id); 
             }
         });
 
@@ -1266,6 +1324,8 @@
             Game.allLines[data.lineId].forEach(p => map.removeLayer(p));
             delete Game.allLines[data.lineId];
           }
+          Game.establishedLines = Game.establishedLines.filter(l => l.id !== data.lineId);
+          Game.updateLineManagementUI();
         });
 
         socket.on("stationDismantled", (data) => {
@@ -1878,7 +1938,9 @@
       }
       
       function resetExtendLineState() {
-          deleteTransientExtension();
+          if (Game.extendLine.transientPolyline) {
+              map.removeLayer(Game.extendLine.transientPolyline);
+          }
           
           Game.extendLine = {
               active: false,
@@ -1976,295 +2038,394 @@
       // =========================================================
 
       function toggleConstructionMode(newMode) {
+        if (Game.mode === newMode) {
+            newMode = 'idle'; // Toggle off if already active
+        }
         const mapContainer = map.getContainer();
 
         const isLineMode = newMode === "track" || newMode === "air-route";
-        const isExtendMode = newMode === "extend-line";
+        const isExtendSelectMode = newMode === "extend-line";
         
         // 路線モード、航空路線モード、または延長モードのいずれかでパネルを表示
-        document.getElementById("extend-line-panel").style.display = isLineMode || isExtendMode ? 'block' : 'none';
+        document.getElementById("extend-line-panel").style.display = isLineMode || isExtendSelectMode ? 'block' : 'none';
         
-        // 延長モードをキャンセル
-        if (!isExtendMode) {
+        // 延長モードをキャンセル (延長選択モードから他のモードに切り替えた場合)
+        if (!isExtendSelectMode && Game.extendLine.lineId) {
             cancelLineExtension();
         }
 
+        // Remove all mode classes
         L.DomUtil.removeClass(mapContainer, "station-mode");
         L.DomUtil.removeClass(mapContainer, "airport-mode");
-        L.DomUtil.removeClass(mapContainer, "track-mode");
-        L.DomUtil.removeClass(mapContainer, "air-route-mode");
         L.DomUtil.removeClass(mapContainer, "dismantle-station-mode");
         L.DomUtil.removeClass(mapContainer, "dismantle-line-mode");
+        
+        // Reset line drawing if switching modes
+        if (newMode !== "track" && newMode !== "air-route") {
+            resetLineDrawing();
+        }
 
-        map.off("click", handleStationCreation);
-        map.off("click", handleAirportCreation);
-        map.off("click", handleLineDismantle);
-
-        resetLineDrawing();
+        // Reset all buttons
+        document.querySelectorAll('.rail-ui-control button').forEach(btn => {
+            if (btn.id && btn.id.startsWith('btn-')) {
+                 btn.classList.remove('active');
+            }
+        });
 
         Game.mode = newMode;
-
-        document
-          .querySelectorAll(".rail-ui-control button")
-          .forEach((btn) => {
-              // 延長パネル内のボタンはここでは制御しない
-              if (btn.id !== 'btn-extend-line-select' && btn.id !== 'btn-extend-line-confirm' && btn.id !== 'btn-extend-line-cancel' && btn.id !== 'btn-extend-line-delete') {
-                  btn.classList.remove("active");
-              }
-          });
-
-        if (newMode === "station") {
-          L.DomUtil.addClass(mapContainer, "station-mode");
-          document.getElementById("btn-station-mode").classList.add("active");
-          map.on("click", handleStationCreation);
-          Game.currentTrackType = "single";
-        } else if (newMode === "airport") {
-          L.DomUtil.addClass(mapContainer, "airport-mode");
-          document.getElementById("btn-airport-mode").classList.add("active");
-          map.on("click", handleAirportCreation);
-          Game.currentTrackType = "air";
-        } else if (newMode === "track") {
-          L.DomUtil.addClass(mapContainer, "track-mode");
-          document.getElementById("btn-track-mode").classList.add("active");
-          Game.currentTrackType = "single";
-        } else if (newMode === "air-route") {
-          L.DomUtil.addClass(mapContainer, "air-route-mode");
-          document.getElementById("btn-air-route-mode").classList.add("active");
-          Game.currentTrackType = "air";
-        } else if (newMode === "dismantle-station") {
-          L.DomUtil.addClass(mapContainer, "dismantle-station-mode");
-          document
-            .getElementById("btn-dismantle-station-mode")
-            .classList.add("active");
-        } else if (newMode === "dismantle-line") {
-          L.DomUtil.addClass(mapContainer, "dismantle-line-mode");
-          document
-            .getElementById("btn-dismantle-line-mode")
-            .classList.add("active");
-          map.on("click", handleLineDismantle);
-        } else if (newMode === "extend-line") {
-            // 延長モードでは、ターミナルクリックを有効にするために一時的にtrack-modeのクラスを付与
-            L.DomUtil.addClass(mapContainer, "track-mode");
-            document.getElementById('btn-extend-line-select').classList.add('active');
-            document.getElementById('btn-extend-line-cancel').disabled = false;
-        } else {
-          // アイドルの場合、駅モードボタンをアクティブにする (デフォルト)
-          document.getElementById("btn-station-mode").classList.add("active"); 
-          Game.currentTrackType = "single";
-        }
         
-        const trackTypeSelect = document.getElementById("track-type");
-        if (trackTypeSelect) {
-            trackTypeSelect.value = Game.currentTrackType;
+        switch (newMode) {
+            case "station":
+                L.DomUtil.addClass(mapContainer, "station-mode");
+                document.getElementById("btn-station-mode").classList.add('active');
+                break;
+            case "airport":
+                L.DomUtil.addClass(mapContainer, "airport-mode");
+                document.getElementById("btn-airport-mode").classList.add('active');
+                break;
+            case "track":
+                L.DomUtil.addClass(mapContainer, "track-mode");
+                document.getElementById("btn-track-mode").classList.add('active');
+                // Ensure track type is rail compatible
+                if (Game.currentTrackType === 'air') Game.currentTrackType = 'single';
+                document.getElementById('track-type').value = Game.currentTrackType;
+                break;
+            case "air-route":
+                L.DomUtil.addClass(mapContainer, "air-route-mode");
+                document.getElementById("btn-air-route-mode").classList.add('active');
+                // Ensure track type is air
+                Game.currentTrackType = 'air';
+                document.getElementById('track-type').value = 'air';
+                break;
+            case "dismantle-station":
+                L.DomUtil.addClass(mapContainer, "dismantle-station-mode");
+                document.getElementById("btn-dismantle-station-mode").classList.add('active');
+                break;
+            case "dismantle-line":
+                L.DomUtil.addClass(mapContainer, "dismantle-line-mode");
+                document.getElementById("btn-dismantle-line-mode").classList.add('active');
+                break;
+            case "extend-line":
+                L.DomUtil.addClass(mapContainer, "track-mode"); // Use track mode cursor for selection
+                document.getElementById("btn-extend-line-select").classList.add('active');
+                break;
+            case "idle":
+            default:
+                // No specific class needed
+                break;
+        }
+      }
+      
+      function handleMapClick(e) {
+        if (Game.mode === "station") {
+          handleStationCreation(e);
+        } else if (Game.mode === "airport") {
+          handleAirportCreation(e);
+        } else if (Game.mode === "dismantle-line") {
+          handleLineDismantle(e);
+        } else if (Game.mode === "track" || Game.mode === "air-route") {
+          // 路線モードでクリックされた場合、最後のノードを削除
+          if (lineCandidateNodes.length > 0) {
+            lineCandidateNodes.pop();
+            updateDrawingPolyline(Game.currentTrackType);
+          }
         }
       }
 
       function updateVehicleBuyUI() {
         const container = document.getElementById("vehicle-buy-container");
-        container.innerHTML = `<h4>🚆✈️ 車両/飛行機購入・路線割当</h4>`;
+        container.innerHTML = "<h3>🚂 車両購入</h3>";
 
         if (Game.establishedLines.length === 0) {
-          container.innerHTML += `<p>路線/航空路線を建設すると車両/飛行機が購入できます。</p>`;
+          container.innerHTML += "<p>車両を購入するには、まず路線を建設してください。</p>";
           return;
         }
 
-        if (Object.keys(VehicleData).length === 0) {
-          container.innerHTML += `<p>車両データをサーバーから取得中...</p>`;
-          return;
-        }
+        Game.establishedLines.forEach((line) => {
+          const lineDiv = document.createElement("div");
+          lineDiv.style.border = `1px solid ${line.color}`;
+          lineDiv.style.padding = "5px";
+          lineDiv.style.margin = "5px 0";
+          lineDiv.innerHTML = `<h4>L${line.id} (${line.trackType}) - ${line.coords.length}ノード</h4>`;
 
-        const sortedVehicleKeys = Object.keys(VehicleData).sort(
-          (a, b) =>
-            VehicleData[a].purchaseMultiplier -
-            VehicleData[b].purchaseMultiplier
-        );
+          const vehicleList = document.createElement("select");
+          vehicleList.id = `vehicle-select-${line.id}`;
+          vehicleList.style.marginBottom = "5px";
 
-        sortedVehicleKeys.forEach((key) => {
-          const data = VehicleData[key];
-          const isAir = data.category === 'air';
-          const baseCost = isAir ? AIRPLANE_BASE_COST : VEHICLE_BASE_COST;
-          const purchaseCost = baseCost * data.purchaseMultiplier; // 単編成コスト
-          const icon = isAir ? '✈️' : '🚆';
-          const maxFormation = data.maxFormation || 1;
+          const isAirRoute = line.trackType === 'air';
+          const isLinearRoute = line.trackType === 'linear';
 
-          const availableLines = Game.establishedLines.filter((line) => {
-            const isLinear = data.name.includes("リニア");
-            
-            if (isAir) {
-                return line.trackType === 'air';
-            }
-            
-            if (line.trackType === 'air') return false; 
-            
-            if (isLinear) return line.trackType === "linear";
-            if (line.trackType === "linear") return false;
+          Object.entries(VehicleData).forEach(([key, data]) => {
+            // 路線タイプと車両カテゴリの整合性チェック
+            if (isAirRoute && data.category !== 'air') return;
+            if (!isAirRoute && data.category === 'air') return;
+            if (isLinearRoute && key !== 'LINEAR') return;
+            if (!isLinearRoute && key === 'LINEAR') return;
 
-            return true;
+            const baseCost = data.category === 'air' ? AIRPLANE_BASE_COST : VEHICLE_BASE_COST;
+            const cost = baseCost * data.purchaseMultiplier;
+            const option = document.createElement("option");
+            option.value = key;
+            option.textContent = `${data.name} (${key}) - ¥${cost.toLocaleString()}`;
+            vehicleList.appendChild(option);
           });
 
-          const lineSelect = `<select id="line-select-${key}" style="width: 35%; margin-right: 5px; margin-top: 5px;">
-                    ${availableLines
-                      .map(
-                        (line) =>
-                          `<option value="${line.id}">L${line.id} (${line.trackType === 'air' ? '航空' : line.trackType})</option>`
-                      )
-                      .join("")}
-                </select>`;
+          if (vehicleList.options.length === 0) {
+              lineDiv.innerHTML += `<p>この路線タイプの車両はありません。</p>`;
+              container.appendChild(lineDiv);
+              return;
+          }
 
-          const disabled = availableLines.length === 0 ? "disabled" : "";
+          lineDiv.appendChild(vehicleList);
+          
+          // 編成数入力 (航空機は1固定)
+          const maxFormation = VehicleData[vehicleList.value]?.maxFormation || 1;
+          const formationInput = document.createElement("input");
+          formationInput.type = "number";
+          formationInput.id = `formation-input-${line.id}`;
+          formationInput.min = 1;
+          formationInput.max = maxFormation;
+          formationInput.value = 1;
+          formationInput.placeholder = "編成数";
+          formationInput.style.width = "50%";
+          formationInput.style.marginRight = "5px";
 
-          container.innerHTML += `
-                    <div style="display: flex; flex-wrap: wrap; align-items: center; margin-bottom: 5px; border-bottom: 1px dotted #ccc; padding-bottom: 5px;">
-                        <span style="width: 100%; font-weight: bold; color: ${data.color};">${icon} ${
-            data.name
-          }</span>
-                        <small style="width: 100%; margin-bottom: 5px;">${
-                          data.maxSpeedKmH
-                        }km/h, ¥${purchaseCost.toLocaleString()} (単編成)</small>
-                        
-                        ${lineSelect}
-                        <input type="number" id="formation-input-${key}" min="1" max="${maxFormation}" value="1" style="width: 30%; margin-right: 5px;" title="編成数 (最大${maxFormation})">
-                        <button onclick="buyVehicle('${key}')" style="width: 25%;" ${disabled}>購入</button>
-                    </div>
-                `;
+          // イベントリスナーを追加して、選択が変わったら最大編成数を更新
+          vehicleList.addEventListener('change', (e) => {
+              const selectedKey = e.target.value;
+              const newMax = VehicleData[selectedKey]?.maxFormation || 1;
+              formationInput.max = newMax;
+              formationInput.value = Math.min(parseInt(formationInput.value), newMax);
+              formationInput.disabled = newMax === 1;
+          });
+          
+          if (maxFormation > 1) {
+              lineDiv.appendChild(formationInput);
+          } else {
+              formationInput.disabled = true;
+          }
+          
+          const buyButton = document.createElement("button");
+          buyButton.textContent = "購入";
+          buyButton.style.width = maxFormation > 1 ? "45%" : "100%";
+          buyButton.onclick = () => {
+            const vehicleKey = document.getElementById(`vehicle-select-${line.id}`).value;
+            const formationSize = maxFormation > 1 ? parseInt(document.getElementById(`formation-input-${line.id}`).value) : 1;
+            
+            if (formationSize < 1 || formationSize > maxFormation || isNaN(formationSize)) {
+                alert(`編成数は1から${maxFormation}の間で指定してください。`);
+                return;
+            }
+            
+            socket.emit("buyVehicle", { lineId: line.id, vehicleKey: vehicleKey, formationSize: formationSize });
+          };
+          lineDiv.appendChild(buyButton);
+          
+          container.appendChild(lineDiv);
         });
       }
 
-      window.buyVehicle = (vehicleKey) => {
-        if (!socket) return alert("サーバーに接続されていません。");
-        const lineSelect = document.getElementById(`line-select-${vehicleKey}`);
-        const formationInput = document.getElementById(`formation-input-${vehicleKey}`);
-        
-        if (!lineSelect || lineSelect.value === "") {
-          alert("割り当てる路線を選択してください。");
+      function updateLineManagementUI() {
+        const container = document.getElementById("line-management-container");
+        container.innerHTML = "";
+
+        if (Game.establishedLines.length === 0) {
+          container.innerHTML = "<p>路線がありません。</p>";
+          document.getElementById("line-config-panel").style.display = 'none';
           return;
         }
         
-        const lineId = lineSelect.value;
-        const formationSize = parseInt(formationInput ? formationInput.value : 1, 10);
+        Game.establishedLines.forEach((line) => {
+            const lineDiv = document.createElement("div");
+            lineDiv.style.padding = "5px";
+            lineDiv.style.margin = "3px 0";
+            lineDiv.style.borderLeft = `5px solid ${line.color}`;
+            lineDiv.style.backgroundColor = '#f9f9f9';
+            lineDiv.style.cursor = 'pointer';
+            lineDiv.title = `L${line.id} (${line.trackType}) - ${line.lengthKm.toFixed(1)} km`;
+            
+            lineDiv.innerHTML = `L${line.id} (${line.trackType}) - ¥${(line.cost / 1000000).toFixed(1)}M`;
+            
+            lineDiv.onclick = () => showLineConfigPanel(line.id);
+            
+            container.appendChild(lineDiv);
+        });
         
-        if (formationSize < 1 || isNaN(formationSize)) {
-            alert("編成数は1以上である必要があります。");
-            return;
+        // 路線リスト更新後、もし設定パネルが開いていたら再表示
+        if (currentConfigLineId) {
+            showLineConfigPanel(currentConfigLineId);
         }
-
-        socket.emit("buyVehicle", { lineId: lineId, vehicleKey: vehicleKey, formationSize: formationSize });
-      };
-
-      window.toggleAccordion = (contentId) => {
-        const content = document.getElementById(contentId);
-        const header = content.previousElementSibling;
-        const icon = header.querySelector("span:last-child");
-
-        const isOpen = content.classList.toggle("open");
-        
-        if (isOpen) {
-          icon.textContent = "▼";
-          // max-heightを計算して設定
-          content.style.maxHeight = content.scrollHeight + "px"; 
-        } else {
-          icon.textContent = "▲";
-          content.style.maxHeight = "0";
-        }
-      };
+      }
       
-      function appendChatMessage(userId, message, timestamp) {
-        const chatMessages = document.getElementById('chat-messages');
-        const messageElement = document.createElement('p');
-        messageElement.style.margin = '2px 0';
-        messageElement.style.wordBreak = 'break-word';
-        
-        const date = new Date(timestamp);
-        const timeString = `${date.getHours().toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')}`;
-        
-        messageElement.innerHTML = `<small style="color: #888;">[${timeString}]</small> <b>${userId}</b>: ${message}`;
-        
-        chatMessages.appendChild(messageElement);
-        chatMessages.scrollTop = chatMessages.scrollHeight; 
+      function showLineConfigPanel(lineId) {
+          const panel = document.getElementById("line-config-panel");
+          const line = Game.establishedLines.find(l => l.id === lineId);
+          
+          if (!line) {
+              panel.style.display = 'none';
+              currentConfigLineId = null;
+              return;
+          }
+          
+          currentConfigLineId = lineId;
+          document.getElementById("config-line-id").textContent = lineId;
+          
+          // 運賃設定
+          const fareInput = document.getElementById("fare-multiplier-input");
+          fareInput.value = line.fareMultiplier || 1.0;
+          updateFareDisplay(fareInput.value);
+          
+          // サービス設定
+          const serviceOptionsContainer = document.getElementById("service-options-container");
+          serviceOptionsContainer.innerHTML = '';
+          
+          Object.entries(SERVICE_SETTINGS).forEach(([key, settings]) => {
+              const serviceDiv = document.createElement('div');
+              serviceDiv.style.marginBottom = '5px';
+              
+              const checkbox = document.createElement('input');
+              checkbox.type = 'checkbox';
+              checkbox.id = `service-check-${lineId}-${key}`;
+              // servicesはObjectとして渡されるので、直接アクセス
+              checkbox.checked = line.services[key] || false; 
+              checkbox.onchange = (e) => {
+                  socket.emit('setLineService', { lineId: lineId, serviceKey: key, enabled: e.target.checked });
+              };
+              
+              const label = document.createElement('label');
+              label.htmlFor = checkbox.id;
+              label.textContent = `${settings.name} (+${(settings.popularityBonus * 100).toFixed(0)}%人気度, 維持費: ${(settings.monthlyCostFactor * 100).toFixed(3)}%)`;
+              
+              serviceDiv.appendChild(checkbox);
+              serviceDiv.appendChild(label);
+              serviceOptionsContainer.appendChild(serviceDiv);
+          });
+
+          panel.style.display = 'block';
+      }
+      
+      function updateFareDisplay(value) {
+          document.getElementById("current-fare-multiplier").textContent = parseFloat(value).toFixed(2);
       }
 
+      function setLineFare() {
+          if (!currentConfigLineId) return;
+          const fareInput = document.getElementById("fare-multiplier-input");
+          const fareMultiplier = parseFloat(fareInput.value);
+          socket.emit('setLineFare', { lineId: currentConfigLineId, fareMultiplier: fareMultiplier });
+      }
+      
       function sendMessage() {
         const input = document.getElementById('chat-input');
-        const message = input.value;
-        
-        if (!message.trim()) return;
-        
-        if (socket) {
+        const message = input.value.trim();
+        if (message) {
             socket.emit('sendMessage', { message: message });
             input.value = '';
         }
       }
+      
+      function appendChatMessage(userId, message, timestamp) {
+        const chatMessages = document.getElementById('chat-messages');
+        const msgDiv = document.createElement('div');
+        const date = new Date(timestamp);
+        const timeString = Number.isNaN(date.getTime())
+          ? ''
+          : ` <span class="chat-timestamp">${date.toLocaleTimeString('ja-JP', {
+              hour: '2-digit',
+              minute: '2-digit',
+            })}</span>`;
 
-      window.sendMessage = sendMessage;
-      window.handleLogin = handleLogin;
-      window.toggleConstructionMode = toggleConstructionMode;
-      window.finalizeLine = finalizeLine;
-      window.finalizeAirRoute = finalizeAirRoute;
-      window.Game = Game;
-      window.handleTerminalClick = handleTerminalClick;
-      window.confirmLineExtension = confirmLineExtension;
-      window.cancelLineExtension = cancelLineExtension;
-      window.deleteTransientExtension = deleteTransientExtension;
-      window.upgradeStation = upgradeStation;
-      window.renameTerminalClient = renameTerminalClient;
-      window.requestLoan = requestLoan;
+        msgDiv.innerHTML = `<strong>${userId}</strong>: ${message}${timeString}`;
+        msgDiv.classList.add('chat-message-row');
+        chatMessages.appendChild(msgDiv);
+        chatMessages.scrollTop = chatMessages.scrollHeight;
+      }
 
-      document.addEventListener("DOMContentLoaded", () => {
-        map = L.map("map", {
-            worldCopyJump: true 
-        }).setView([INITIAL_LAT, INITIAL_LNG], 13);
-        L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-          attribution: "© OpenStreetMap contributors (Base)",
-          maxZoom: 19,
-          minzoom: 2,
-        }).addTo(map);
-        L.tileLayer(
-          "https://cyberjapandata.gsi.go.jp/xyz/dem5a_color/{z}/{x}/{y}.png",
-          { attribution: "国土地理院", opacity: 0.5 }
-        ).addTo(map);
+      function toggleAccordion(contentId) {
+        const content = document.getElementById(contentId);
+        if (!content) return;
 
-        // モバイル対応のため、UIコントロールをマップ外に配置
-        const controlDiv = document.querySelector(".rail-ui-control");
-        const controlHtml = controlDiv.innerHTML;
-        controlDiv.remove();
+        const toggleIconIdMap = {
+          'stats-content': 'stats-toggle-icon',
+          'news-content': 'news-toggle-icon',
+          'control-content': 'control-toggle-icon',
+          'chat-content': 'chat-toggle-icon',
+          'ranking-content': 'ranking-toggle-icon',
+        };
 
-        // Leafletコントロールとして再配置 (PC向け)
-        if (window.innerWidth > 650) {
-            const constructControl = L.control({ position: "topleft" });
-            constructControl.onAdd = function (map) {
-              const div = L.DomUtil.create("div", "rail-ui-control");
-              div.innerHTML = controlHtml;
-              L.DomEvent.disableClickPropagation(div);
-              
-              const trackTypeSelect = div.querySelector("#track-type");
-              if (trackTypeSelect) {
-                  trackTypeSelect.value = Game.currentTrackType;
-              }
-              
-              return div;
-            };
-            constructControl.addTo(map);
+        const isOpening = !content.classList.contains('open');
+        content.classList.toggle('open');
+
+        const iconId = toggleIconIdMap[contentId];
+        if (iconId) {
+          const icon = document.getElementById(iconId);
+          if (icon) icon.textContent = isOpening ? '▼' : '▲';
+        }
+
+        if (isOpening) {
+          content.style.maxHeight = '';
         } else {
-            // モバイルの場合は、body直下に再挿入された要素がそのまま使用される
-            document.querySelector('.rail-ui-control').innerHTML = controlHtml;
+          content.style.maxHeight = '0';
+        }
+      }
+
+      function initializeMap() {
+        const mapInstance = L.map('map', {
+          worldCopyJump: true,
+        }).setView([INITIAL_LAT, INITIAL_LNG], 7);
+
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+          maxZoom: 19,
+          attribution:
+            '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+        }).addTo(mapInstance);
+
+        mapInstance.on('click', handleMapClick);
+        return mapInstance;
+      }
+
+      function bindUiEvents() {
+        const trackTypeSelect = document.getElementById('track-type');
+        if (trackTypeSelect) {
+          trackTypeSelect.addEventListener('change', (event) => {
+            const value = event.target.value;
+            Game.currentTrackType = value === 'air' ? 'air' : value;
+            if (Game.mode === 'air-route' && value !== 'air') {
+              toggleConstructionMode('air-route');
+            }
+            if (Game.mode === 'track' && value === 'air') {
+              toggleConstructionMode('track');
+            }
+          });
         }
 
-        toggleConstructionMode("idle");
-
-        const savedUserId = getCookie("userId");
-        if (savedUserId) {
-          document.getElementById("username-input").value = savedUserId;
-        }
-        
         const chatInput = document.getElementById('chat-input');
         if (chatInput) {
-            chatInput.addEventListener('keypress', function(e) {
-                if (e.key === 'Enter') {
-                    sendMessage();
-                }
-            });
+          chatInput.addEventListener('keydown', (event) => {
+            if (event.key === 'Enter' && !event.shiftKey) {
+              event.preventDefault();
+              sendMessage();
+            }
+          });
         }
+      }
+
+      function restoreSessionIfAvailable() {
+        const existingUser = getCookie('userId');
+        if (!existingUser) return;
+
+        Game.userId = existingUser;
+        const overlay = document.getElementById('login-overlay');
+        if (overlay) overlay.style.display = 'none';
+        connectSocket(existingUser);
+      }
+
+      document.addEventListener('DOMContentLoaded', () => {
+        map = initializeMap();
+        bindUiEvents();
+        restoreSessionIfAvailable();
       });
     </script>
   </body>
+</html>
 </html>
