@@ -2265,23 +2265,25 @@ function updateVehiclePositions(vehiclePositions) {
           document.getElementById("line-config-panel").style.display = 'none';
           return;
         }
-        
-        Game.establishedLines.forEach((line) => {
-            const lineDiv = document.createElement("div");
-            lineDiv.style.padding = "5px";
-            lineDiv.style.margin = "3px 0";
-            lineDiv.style.borderLeft = `5px solid ${line.color}`;
-            lineDiv.style.backgroundColor = '#f9f9f9';
-            lineDiv.style.cursor = 'pointer';
-            lineDiv.title = `L${line.id} (${line.trackType}) - ${line.lengthKm.toFixed(1)} km`;
-            
-            lineDiv.innerHTML = `L${line.id} (${line.trackType}) - ¥${(line.cost / 1000000).toFixed(1)}M`;
-            
-            lineDiv.onclick = () => showLineConfigPanel(line.id);
-            
-            container.appendChild(lineDiv);
-        });
-        
+Game.establishedLines.forEach((line) => {
+    const lineDiv = document.createElement("div");
+    lineDiv.style.padding = "5px";
+    lineDiv.style.margin = "3px 0";
+    lineDiv.style.borderLeft = `5px solid ${line.color || '#ccc'}`;
+    lineDiv.style.backgroundColor = '#f9f9f9';
+    lineDiv.style.cursor = 'pointer';
+
+    // ✅ 安全に数値化（undefined → 0）
+    const lengthKm = Number(line.lengthKm) || 0;
+
+    lineDiv.title = `L${line.id} (${line.trackType || 'unknown'}) - ${lengthKm.toFixed(1)} km`;
+    lineDiv.innerHTML = `L${line.id} (${line.trackType || 'unknown'}) - ${lengthKm.toFixed(1)} km`;
+
+    lineDiv.onclick = () => showLineConfigPanel(line.id);
+
+    container.appendChild(lineDiv);
+});
+
         // 路線リスト更新後、もし設定パネルが開いていたら再表示
         if (currentConfigLineId) {
             showLineConfigPanel(currentConfigLineId);
