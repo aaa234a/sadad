@@ -554,10 +554,27 @@ const ANNUAL_INTEREST_RATE = 0.10;
 
 const SERVICE_SETTINGS = {
     // サービスの種類: {名前、人気度ボーナス(%)、月次維持費(ベースコストの割合)}
-    DINING_CAR: { name: "車内販売/食堂車", popularityBonus: 0.10, monthlyCostFactor: 0.0005 }, // +10%人気度, 0.05%維持費
-    COMFORT_SEATS: { name: "座り心地の良い椅子", popularityBonus: 0.05, monthlyCostFactor: 0.0002 }, // +5%人気度, 0.02%維持費
-    CLEAN_TOILETS: { name: "きれいなトイレ", popularityBonus: 0.03, monthlyCostFactor: 0.0001 }, // +3%人気度, 0.01%維持費
+    DINING_CAR: { name: "車内販売/食堂車", popularityBonus: 0.10, monthlyCostFactor: 0.0005 },
+    COMFORT_SEATS: { name: "座り心地の良い椅子", popularityBonus: 0.05, monthlyCostFactor: 0.0002 },
+    CLEAN_TOILETS: { name: "きれいなトイレ", popularityBonus: 0.03, monthlyCostFactor: 0.0001 },
+
+    WIFI: { name: "無料Wi-Fi", popularityBonus: 0.07, monthlyCostFactor: 0.0003 },
+    AIR_CONDITIONING: { name: "空調完備", popularityBonus: 0.04, monthlyCostFactor: 0.00015 },
+    ENTERTAINMENT: { name: "座席スクリーン/娯楽設備", popularityBonus: 0.08, monthlyCostFactor: 0.0004 },
+    SLEEPER_CAR: { name: "寝台車", popularityBonus: 0.12, monthlyCostFactor: 0.0006 },
+    FIRST_CLASS: { name: "ファーストクラス車両", popularityBonus: 0.15, monthlyCostFactor: 0.0008 },
+    LUGGAGE_SERVICE: { name: "荷物預かりサービス", popularityBonus: 0.05, monthlyCostFactor: 0.00025 },
+    KIDS_PLAYROOM: { name: "子ども用プレイルーム", popularityBonus: 0.06, monthlyCostFactor: 0.00035 },
+
+    // --- 節約・逆人気系サービス ---
+    NO_AIR_CON: { name: "空調なし（節電モード）", popularityBonus: -0.06, monthlyCostFactor: -0.0001 }, // -6%人気, 維持費 -0.01%
+    HARD_SEATS: { name: "固い椅子でコストカット", popularityBonus: -0.05, monthlyCostFactor: -0.00015 }, // -5%人気, 維持費 -0.015%
+    NO_WIFI: { name: "Wi-Fi撤去", popularityBonus: -0.04, monthlyCostFactor: -0.0001 }, // -4%人気, 維持費 -0.01%
+    MINIMAL_CLEANING: { name: "清掃頻度を減らす", popularityBonus: -0.07, monthlyCostFactor: -0.0002 }, // -7%人気, 維持費 -0.02%
+    LOW_LIGHTING: { name: "照明を減らして節電", popularityBonus: -0.02, monthlyCostFactor: -0.00005 }, // -2%人気, 維持費 -0.005%
+    STANDING_ONLY: { name: "立ち乗り列車（激安）", popularityBonus: -0.15, monthlyCostFactor: -0.0004 }, // -15%人気, 維持費 -0.04%
 };
+
 
 // A. サーバーサイド・ゲーム定数とユーティリティ内の REVENUE_SETTINGS
 const REVENUE_SETTINGS = {
