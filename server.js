@@ -194,6 +194,8 @@ const LineSchema = new mongoose.Schema({
     lengthKm: Number,
     color: String,
     trackType: String, 
+    fareMultiplier: { type: Number, default: 1.0 }, // 追加: 運賃倍率
+    services: { type: Map, of: Boolean, default: {} }, // 追加: サービス提供
 }, { collection: 'lines' });
 const LineModel = mongoose.model('Line', LineSchema);
 
@@ -549,6 +551,14 @@ const AIRPLANE_BASE_COST = 50000000;
 const LINE_COLORS = ['#E4007F', '#009933', '#0000FF', '#FFCC00', '#FF6600', '#9900CC'];
 const MAX_LOAN_RATE = 0.5; 
 const ANNUAL_INTEREST_RATE = 0.10; 
+
+const SERVICE_SETTINGS = {
+    // サービスの種類: {名前、人気度ボーナス(%)、月次維持費(ベースコストの割合)}
+    DINING_CAR: { name: "車内販売/食堂車", popularityBonus: 0.10, monthlyCostFactor: 0.0005 }, // +10%人気度, 0.05%維持費
+    COMFORT_SEATS: { name: "座り心地の良い椅子", popularityBonus: 0.05, monthlyCostFactor: 0.0002 }, // +5%人気度, 0.02%維持費
+    CLEAN_TOILETS: { name: "きれいなトイレ", popularityBonus: 0.03, monthlyCostFactor: 0.0001 }, // +3%人気度, 0.01%維持費
+};
+
 // A. サーバーサイド・ゲーム定数とユーティリティ内の REVENUE_SETTINGS
 const REVENUE_SETTINGS = {
     passengerPerKm: 80, // 75 -> 80 に増加
@@ -816,6 +826,59 @@ function calculateConstructionCost(coord1, coord2, trackType) {
     
     return { cost: Math.round(totalCost), lengthKm: distanceKm, terrainMultiplier: 1 + terrainMultiplier };
 }
+
+function calculatePopularity(line, startTerminal, endTerminal) {
+    if (line.trackType === 'air') return 1.0; // 航空路線は一旦競合・サービス効果なし
+
+    let popularity = 1.0; // 基準人気度
+
+    // 1. サービス提供によるボーナス
+    let serviceBonus = 0;
+    // servicesはMapまたはObjectである可能性があるため、適切に処理
+    const services = line.services instanceof Map ? Object.fromEntries(line.services) : line.services;
+
+    for (const serviceKey in services) {
+        if (services[serviceKey] && SERVICE_SETTINGS[serviceKey]) {
+            serviceBonus += SERVICE_SETTINGS[serviceKey].popularityBonus;
+        }
+    }
+    popularity += serviceBonus;
+
+    // 2. 運賃倍率によるペナルティ/ボーナス
+    const fareMultiplier = line.fareMultiplier || 1.0;
+    // 運賃が高すぎると人気度が下がる (1.0倍を超えた分に対して30%のペナルティ)
+    popularity -= Math.max(0, (fareMultiplier - 1.0) * 0.3); 
+    // 運賃が低すぎると人気度が上がる (1.0倍未満の分に対して50%のボーナス)
+    popularity += Math.max(0, (1.0 - fareMultiplier) * 0.5); 
+    
+    // 3. 競合駅によるペナルティ (駅の取り合い)
+    const terminals = [startTerminal, endTerminal];
+    const allTerminals = ServerGame.globalStats.stations; // 鉄道駅のみ対象
+    const COMPETITION_RADIUS_KM = 5; // 5km以内を競合範囲とする
+
+    terminals.forEach(terminal => {
+        if (terminal.isAirport) return; 
+        
+        const terminalCoord = [terminal.lat, terminal.lng];
+
+        allTerminals.forEach(otherTerminal => {
+            if (otherTerminal.id === terminal.id || otherTerminal.ownerId === line.ownerId) {
+                return; // 自分の駅、同じ駅は無視
+            }
+            
+            const distanceKm = getDistanceKm(terminalCoord, [otherTerminal.lat, otherTerminal.lng]);
+            
+            if (distanceKm < COMPETITION_RADIUS_KM) {
+                // 距離が近いほどペナルティが大きい
+                const competitionFactor = 1 - (distanceKm / COMPETITION_RADIUS_KM); // 0 (遠い) から 1 (近い)
+                popularity -= competitionFactor * 0.15; // 最大15%のペナルティ
+            }
+        });
+    });
+
+    return Math.max(0.1, Math.min(2.0, popularity)); // 最小10%, 最大200%に制限
+}
+
 
 // =================================================================
 // B. サーバーサイド・クラス定義
@@ -1152,6 +1215,10 @@ class ServerVehicle {
         let revenue = 0;
         const user = ServerGame.users[this.ownerId];
         
+        // 路線マネージャーを取得
+        const lineManager = user ? user.establishedLines.find(l => l.id === this.lineId) : null;
+        const fareMultiplier = lineManager ? (lineManager.fareMultiplier || 1.0) : 1.0;
+
         // 1. 貨物の荷降ろしと収益計算
         if (this.cargo.destinationTerminalId === terminal.id) {
             const distance = Math.max(1, this.routeLength);
@@ -1199,6 +1266,9 @@ class ServerVehicle {
 
                 // 編成ボーナス (編成数が多いほど効率が良い)
                 multiplier *= 1 + (this.formationSize - 1) * REVENUE_SETTINGS.formationBonusPerCar;
+                
+                // 運賃倍率を適用
+                multiplier *= fareMultiplier;
 
                 // 収益 = 輸送量 * 距離 * 基本運賃/Km * マルチプライヤー
                 revenue += Math.round(deliveredLoad * distance * baseRate * multiplier);
@@ -1218,13 +1288,23 @@ class ServerVehicle {
                 
                 const isRailTerminal = !terminal.isAirport;
                 
+                // 人気度を計算し、需要に適用
+                let popularity = 1.0;
+                let nextDestinationTerminal = null;
+                if (lineManager && isRailTerminal) {
+                    nextDestinationTerminal = getTerminalById(nextDestination.id, nextDestination.isAirport);
+                    if (nextDestinationTerminal) {
+                        popularity = calculatePopularity(lineManager, terminal, nextDestinationTerminal);
+                    }
+                }
+
                 if (this.data.type === 'passenger') {
                     const availableCapacity = this.capacity - this.cargo.passenger; 
                     let loadAmount = 0;
                     
                     if (isRailTerminal) {
-                        // 鉄道駅の場合: 駅の需要を参照
-                        loadAmount = Math.min(availableCapacity, terminal.demand.passenger * 0.1); 
+                        // 鉄道駅の場合: 駅の需要を参照し、人気度を乗じる
+                        loadAmount = Math.min(availableCapacity, terminal.demand.passenger * 0.1 * popularity); 
                         terminal.isDemandHigh = terminal.demand.passenger > this.capacity * 2; 
                         io.emit('terminalUpdate', { id: terminal.id, isAirport: false, isDemandHigh: terminal.isDemandHigh });
                     } else { 
@@ -1238,8 +1318,8 @@ class ServerVehicle {
                     let loadAmount = 0;
                     
                     if (isRailTerminal) {
-                        // 鉄道駅の場合: 駅の需要を参照
-                        loadAmount = Math.min(availableCapacity, terminal.demand.freight * 0.1);
+                        // 鉄道駅の場合: 駅の需要を参照し、人気度を乗じる
+                        loadAmount = Math.min(availableCapacity, terminal.demand.freight * 0.1 * popularity);
                         terminal.isDemandHigh = terminal.demand.freight > this.capacity * 2; 
                         io.emit('terminalUpdate', { id: terminal.id, isAirport: false, isDemandHigh: terminal.isDemandHigh });
                     } else {
@@ -1287,7 +1367,7 @@ class ServerVehicle {
     }
 }
 class ServerLineManager {
-    constructor(id, ownerId, terminals, coords, cost, lengthKm, color, trackType) {
+    constructor(id, ownerId, terminals, coords, cost, lengthKm, color, trackType, fareMultiplier = 1.0, services = {}) {
         this.id = id;
         this.ownerId = ownerId;
         this.stations = terminals; 
@@ -1297,6 +1377,8 @@ class ServerLineManager {
         this.color = color;
         this.trackType = trackType;
         this.vehicles = [];
+        this.fareMultiplier = fareMultiplier;
+        this.services = services instanceof Map ? services : new Map(Object.entries(services));
     }
     async addVehicle(vehicleKey, formationSize = 1) { 
         const data = VehicleData[vehicleKey];
@@ -1523,7 +1605,9 @@ async function loadUserData(userId) {
         
         const line = new ServerLineManager(
             row.id, row.ownerId, uniqueLineTerminals, coords, 
-            row.cost, row.lengthKm, row.color, row.trackType
+            row.cost, row.lengthKm, row.color, row.trackType,
+            row.fareMultiplier || 1.0, 
+            row.services || {}
         );
         return line;
     });
@@ -1600,6 +1684,15 @@ async function processMonthlyFinancials() {
         user.establishedLines.forEach(line => {
             // 路線維持費 (年間2.4%を月割 0.2%)
             monthlyMaintenance += line.cost * 0.002; 
+            
+            // サービス維持費の計算
+            const services = line.services instanceof Map ? Object.fromEntries(line.services) : line.services;
+            for (const serviceKey in services) {
+                if (services[serviceKey] && SERVICE_SETTINGS[serviceKey]) {
+                    // サービス維持費は路線の建設コストに依存
+                    monthlyMaintenance += line.cost * SERVICE_SETTINGS[serviceKey].monthlyCostFactor;
+                }
+            }
         });
         
         user.vehicles.forEach(vehicle => {
@@ -1972,7 +2065,9 @@ async function serverSimulationLoop() {
                 establishedLines: user.establishedLines.map(line => ({ 
                     id: line.id, ownerId: line.ownerId, 
                     coords: line.coords, color: line.color, 
-                    trackType: line.trackType, cost: line.cost 
+                    trackType: line.trackType, cost: line.cost,
+                    fareMultiplier: line.fareMultiplier,
+                    services: Object.fromEntries(line.services),
                 })),
                 vehicles: user.vehicles.map(v => ({ id: v.id, data: v.data, formationSize: v.formationSize })), 
             });
@@ -2062,7 +2157,9 @@ io.on('connection', (socket) => {
         const clientLines = userState.establishedLines.map(line => ({ 
             id: line.id, ownerId: line.ownerId, 
             coords: line.coords, color: line.color, 
-            trackType: line.trackType, cost: line.cost 
+            trackType: line.trackType, cost: line.cost,
+            fareMultiplier: line.fareMultiplier,
+            services: Object.fromEntries(line.services),
         }));
         
         const allClientLines = ServerGame.globalStats.allLines;
@@ -2082,6 +2179,7 @@ io.on('connection', (socket) => {
                 id: a.id, latlng: [a.lat, a.lng], ownerId: a.ownerId, type: a.type, capacity: a.capacity, name: a.name, lineConnections: a.lineConnections, isOverloaded: a.isOverloaded
             })),
             vehicleData: ServerGame.VehicleData,
+            serviceSettings: SERVICE_SETTINGS, // サービス設定をクライアントに送信
         });
         
         const chatHistory = await ChatModel.find({})
@@ -2407,7 +2505,9 @@ io.on('connection', (socket) => {
                 cost: totalCost,
                 lengthKm: totalLengthKm,
                 color: lineColor,
-                trackType: trackType
+                trackType: trackType,
+                fareMultiplier: newLineManager.fareMultiplier,
+                services: Object.fromEntries(newLineManager.services),
             });
             
             ServerGame.globalStats.allLines.push({
@@ -2433,7 +2533,9 @@ io.on('connection', (socket) => {
 
             io.emit('lineBuilt', {
                 ownerId: userId, id: lineId, coords: fullCoords, color: lineColor, 
-                trackType: trackType, cost: totalCost, lengthKm: totalLengthKm
+                trackType: trackType, cost: totalCost, lengthKm: totalLengthKm,
+                fareMultiplier: newLineManager.fareMultiplier,
+                services: Object.fromEntries(newLineManager.services),
             });
             
             socket.emit('updateUserState', { 
@@ -2444,7 +2546,9 @@ io.on('connection', (socket) => {
                 establishedLines: user.establishedLines.map(line => ({ 
                     id: line.id, ownerId: line.ownerId, 
                     coords: line.coords, color: line.color, 
-                    trackType: line.trackType, cost: line.cost 
+                    trackType: line.trackType, cost: line.cost,
+                    fareMultiplier: line.fareMultiplier,
+                    services: Object.fromEntries(line.services),
                 })),
                 vehicles: user.vehicles.map(v => ({ id: v.id, data: v.data, formationSize: v.formationSize })), 
             });
@@ -2629,7 +2733,9 @@ io.on('connection', (socket) => {
             cost: lineManager.cost,
             lengthKm: lineManager.lengthKm,
             color: lineManager.color,
-            trackType: lineManager.trackType
+            trackType: lineManager.trackType,
+            fareMultiplier: lineManager.fareMultiplier,
+            services: Object.fromEntries(lineManager.services),
         });
         
         await saveUserFinancials(user.userId, user.money, user.totalConstructionCost, user.loans);
@@ -2642,7 +2748,9 @@ io.on('connection', (socket) => {
             establishedLines: user.establishedLines.map(line => ({ 
                 id: line.id, ownerId: line.ownerId, 
                 coords: line.coords, color: line.color, 
-                trackType: line.trackType, cost: line.cost 
+                trackType: line.trackType, cost: line.cost,
+                fareMultiplier: line.fareMultiplier,
+                services: Object.fromEntries(line.services),
             })),
             vehicles: user.vehicles.map(v => ({ id: v.id, data: v.data, formationSize: v.formationSize })), 
         });
@@ -2672,6 +2780,68 @@ io.on('connection', (socket) => {
             }
         }
     });
+
+    // 運賃設定
+    socket.on('setLineFare', async (data) => {
+        if (!userId) return;
+        const { lineId, fareMultiplier } = data;
+        const user = ServerGame.users[userId];
+        const line = user.establishedLines.find(l => l.id === lineId);
+
+        if (!line) {
+            socket.emit('error', '路線が見つかりません。');
+            return;
+        }
+        
+        // 運賃倍率の範囲チェック (0.5倍から3.0倍)
+        const clampedFare = Math.max(0.5, Math.min(3.0, fareMultiplier));
+
+        line.fareMultiplier = clampedFare;
+        
+        await LineModel.updateOne(
+            { id: lineId },
+            { $set: { fareMultiplier: clampedFare } }
+        );
+        
+        // 全クライアントに更新を通知
+        io.emit('lineUpdated', { id: lineId, fareMultiplier: clampedFare });
+        socket.emit('info', `路線 L${lineId} の運賃倍率を ${clampedFare.toFixed(2)} に設定しました。`);
+    });
+
+    // サービス提供設定
+    socket.on('setLineService', async (data) => {
+        if (!userId) return;
+        const { lineId, serviceKey, enabled } = data;
+        const user = ServerGame.users[userId];
+        const line = user.establishedLines.find(l => l.id === lineId);
+
+        if (!line) {
+            socket.emit('error', '路線が見つかりません。');
+            return;
+        }
+        
+        if (!SERVICE_SETTINGS[serviceKey]) {
+            socket.emit('error', '無効なサービスキーです。');
+            return;
+        }
+
+        line.services.set(serviceKey, enabled); // Map型として保存
+        
+        // DB保存用にMapをObjectに変換
+        const servicesObject = Object.fromEntries(line.services);
+
+        await LineModel.updateOne(
+            { id: lineId },
+            { $set: { services: servicesObject } }
+        );
+        
+        // 全クライアントに更新を通知
+        io.emit('lineUpdated', { id: lineId, services: servicesObject });
+        
+        const serviceName = SERVICE_SETTINGS[serviceKey].name;
+        const status = enabled ? '提供開始' : '提供停止';
+        socket.emit('info', `路線 L${lineId} で ${serviceName} のサービスを ${status} しました。`);
+    });
     
     socket.on('dismantleLine', async (data) => {
         if (!userId) return;
@@ -2687,7 +2857,10 @@ io.on('connection', (socket) => {
                 totalConstructionCost: user.totalConstructionCost,
                 currentLoan: user.currentLoan,
                 monthlyRepayment: user.monthlyRepayment,
-                establishedLines: user.establishedLines.map(l => ({ id: l.id, ownerId: l.ownerId, coords: l.coords, color: l.color, trackType: l.trackType, cost: l.cost })),
+                establishedLines: user.establishedLines.map(l => ({ 
+                    id: l.id, ownerId: l.ownerId, coords: l.coords, color: l.color, trackType: l.trackType, cost: l.cost,
+                    fareMultiplier: l.fareMultiplier, services: Object.fromEntries(l.services)
+                })),
                 vehicles: user.vehicles.map(v => ({ id: v.id, data: v.data, formationSize: v.formationSize })),
             });
             socket.emit('info', result.message);
@@ -2910,3 +3083,4 @@ async function startServer() {
 }
 
 startServer();
+
