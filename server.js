@@ -2852,17 +2852,25 @@ io.on('connection', (socket) => {
             io.emit('lineDismantled', { lineId: result.lineId, ownerId: userId });
             
             const user = ServerGame.users[userId];
-            socket.emit('updateUserState', {
-                money: user.money,
-                totalConstructionCost: user.totalConstructionCost,
-                currentLoan: user.currentLoan,
-                monthlyRepayment: user.monthlyRepayment,
-                establishedLines: user.establishedLines.map(l => ({ 
-                    id: l.id, ownerId: l.ownerId, coords: l.coords, color: l.color, trackType: l.trackType, cost: l.cost,
-                    fareMultiplier: l.fareMultiplier, services: Object.fromEntries(l.services)
-                })),
-                vehicles: user.vehicles.map(v => ({ id: v.id, data: v.data, formationSize: v.formationSize })),
-            });
+socket.emit('updateUserState', { 
+    money: user.money, 
+    totalConstructionCost: user.totalConstructionCost,
+    currentLoan: user.currentLoan,
+    monthlyRepayment: user.monthlyRepayment,
+    establishedLines: user.establishedLines.map(line => ({ 
+        id: line.id,
+        ownerId: line.ownerId,
+        coords: line.coords,
+        color: line.color,
+        trackType: line.trackType,
+        cost: line.cost,
+        lengthKm: line.lengthKm || 0, // ✅ ← これを追加！
+        fareMultiplier: line.fareMultiplier,
+        services: Object.fromEntries(line.services),
+    })),
+    vehicles: user.vehicles.map(v => ({ id: v.id, data: v.data, formationSize: v.formationSize })), 
+});
+
             socket.emit('info', result.message);
         } else {
             socket.emit('error', result.message);
