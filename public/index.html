@@ -2143,6 +2143,8 @@
         }
 
         Game.establishedLines.forEach((line) => {
+          console.log("Line data:", line);
+
           const lineDiv = document.createElement("div");
           lineDiv.style.border = `1px solid ${line.color}`;
           lineDiv.style.padding = "5px";
