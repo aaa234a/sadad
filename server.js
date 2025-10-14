@@ -578,10 +578,10 @@ const SERVICE_SETTINGS = {
 
 // A. サーバーサイド・ゲーム定数とユーティリティ内の REVENUE_SETTINGS
 const REVENUE_SETTINGS = {
-    passengerPerKm: 80, // 75 -> 80 に増加
-    freightPerKm: 33,  // 30 -> 33 に増加
-    airCategoryMultiplier: 2.5, // 2.4 -> 2.5 に増加
-    globalMultiplier: 1.05, // 1.0 -> 1.05 に増加
+    passengerPerKm: 90, // 75 -> 80 に増加
+    freightPerKm: 40,  // 30 -> 33 に増加
+    airCategoryMultiplier: 2.7, // 2.4 -> 2.5 に増加
+    globalMultiplier: 1.1, // 1.0 -> 1.05 に増加
     longHaulThresholdKm: 120,
     longHaulMaxBonus: 2.0,
     loadBonusScale: 0.9,
@@ -589,7 +589,7 @@ const REVENUE_SETTINGS = {
     demandBonusScale: 0.3,
     demandBonusCap: 0.6,
     airportPremiumMultiplier: 1.35,
-    formationBonusPerCar: 0.06, // 0.05 -> 0.06 に増加
+    formationBonusPerCar: 0.07, // 0.05 -> 0.06 に増加
 };
 
 const VehicleData = {
